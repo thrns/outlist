@@ -1,0 +1,13 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import assert from "node:assert/strict";
+const parse = (name) => JSON.parse(readFileSync(resolve(import.meta.dirname, `../src/data/${name}.json`), "utf8"));
+const projects=parse("projects"),categories=parse("categories");
+assert.equal(projects.length,33,"Expected 33 original projects");
+assert.equal(categories.length,8,"Expected eight original categories");
+assert.equal(new Set(projects.map(p=>p.id)).size,projects.length,"Project IDs must be unique");
+assert.equal(new Set(projects.map(p=>p.repo.toLowerCase())).size,projects.length,"Repositories must be unique");
+assert(projects.every(p=>categories.some(c=>c.id===p.category)),"Unknown project category");
+assert(projects.every(p=>/^https:\/\//.test(p.website)),"Project websites must be HTTPS");
+assert(projects.every(p=>typeof p.stars==="number"&&typeof p.forks==="number"),"Metrics must be numeric");
+console.log(`Data validation passed: ${projects.length} projects across ${categories.length} categories.`);

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "developer-tools",
+    "name": "Developer Tools",
+    "icon": "code",
+    "description": "Editors, API clients, automation, testing and everything developers use to build better software."
+  },
+  {
+    "id": "ai-machine-learning",
+    "name": "AI & Machine Learning",
+    "icon": "brain",
+    "description": "Frameworks and tools for building, deploying, evaluating and observing AI applications."
+  },
+  {
+    "id": "productivity",
+    "name": "Productivity",
+    "icon": "grid",
+    "description": "Knowledge bases, project management and personal productivity tools built in the open."
+  },
+  {
+    "id": "design",
+    "name": "Design",
+    "icon": "paint",
+    "description": "Open tools for interface design, diagrams, illustration and creative collaboration."
+  },
+  {
+    "id": "analytics",
+    "name": "Analytics",
+    "icon": "chart",
+    "description": "Understand usage, monitor performance and make data-informed decisions."
+  },
+  {
+    "id": "infrastructure",
+    "name": "Infrastructure",
+    "icon": "server",
+    "description": "Self-hosting, cloud infrastructure, deployment and observability software."
+  },
+  {
+    "id": "data-databases",
+    "name": "Data & Databases",
+    "icon": "database",
+    "description": "Databases, backends, search engines and data platforms."
+  },
+  {
+    "id": "communication",
+    "name": "Communication",
+    "icon": "message",
+    "description": "Open-source collaboration, messaging and team communication tools."
+  }
+]

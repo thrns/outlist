@@ -1,0 +1,6 @@
+"use client";
+import Link from "next/link";
+import {useDirectory} from "@/context/directory-provider";
+import {categories} from "@/data/catalog";
+import {Glyph} from "@/components/project/glyph";
+export function CategoriesPage(){const {visibleProjects}=useDirectory();return <main className="container page"><div className="eyebrow muted">Browse the ecosystem</div><h1 className="page-title">Explore categories</h1><p className="muted" style={{margin:"0 0 26px",maxWidth:680}}>From infrastructure to creativity, find open-source tools organized around what you want to accomplish.</p><div className="category-grid category-index-grid" style={{gridTemplateColumns:"repeat(2,minmax(0,1fr))"}}>{categories.map(c=><Link key={c.id} className="category-tile" style={{minHeight:135,alignItems:"flex-start"}} href={`/category/${c.id}`}><span className="category-icon"><Glyph name={c.icon}/></span><div style={{minWidth:0,flex:1}}><div className="category-name" style={{fontSize:15}}>{c.name}</div><p className="muted small" style={{margin:"7px 0"}}>{c.description}</p><div className="category-count">{visibleProjects.filter(p=>p.category===c.id).length} projects <Glyph name="arrow" size="sm"/></div></div></Link>)}</div></main>}
