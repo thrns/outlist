@@ -41,9 +41,11 @@ const identityNames = [
 let stage = "checking local Supabase state";
 let stackStartAttempted = false;
 let nextServer;
+let nextServerLogs = "";
 let adminClient;
 const createdUserIds = [];
 let temporaryEmails;
+const sensitiveValues = [];
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -171,6 +173,56 @@ async function cleanupUsers(identities) {
   }
 }
 
+function redactDiagnostics(input) {
+  let safe = input;
+  for (const value of sensitiveValues.sort((a, b) => b.length - a.length)) {
+    safe = safe.split(value).join("[redacted]");
+  }
+  return safe
+    .replace(/sb_(?:secret|publishable)_[A-Za-z0-9_-]+/g, "[redacted-key]")
+    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[redacted-jwt]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+    .replace(/\b\d{6,8}\b/g, "[redacted-code]")
+    .replace(/(authorization|cookie|set-cookie|apikey)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
+}
+
+function printRelevantLogLines(label, input) {
+  const lines = redactDiagnostics(input).split(/\r?\n/);
+  const selected = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/error|exception|fatal|warn|\b(?:400|401|403|500|502|503)\b/i.test(lines[index])) {
+      for (let offset = Math.max(0, index - 1); offset <= Math.min(lines.length - 1, index + 2); offset += 1) {
+        selected.add(offset);
+      }
+    }
+  }
+  const excerpts = [...selected]
+    .sort((a, b) => a - b)
+    .map((index) => lines[index])
+    .filter(Boolean)
+    .slice(-40);
+  if (excerpts.length > 0) {
+    console.error(`${label} diagnostic excerpts (credentials and test identities redacted):`);
+    console.error(excerpts.join("\n"));
+  }
+}
+
+async function printSupabaseAuthLogs() {
+  try {
+    const containers = await capture("docker", ["ps", "--format", "{{.Names}}"]);
+    if (containers.code !== 0) return;
+    const authContainers = containers.stdout
+      .split(/\r?\n/)
+      .filter((name) => /supabase.*auth|auth.*supabase/i.test(name));
+    for (const container of authContainers) {
+      const logs = await capture("docker", ["logs", "--tail", "300", container]);
+      if (logs.code === 0) printRelevantLogLines("Supabase Auth", logs.stdout);
+    }
+  } catch {
+    // CI still reports the failing assertion if the container runtime is unavailable.
+  }
+}
+
 async function stopNextServer() {
   if (!nextServer?.pid) return;
   try {
@@ -275,6 +327,7 @@ async function main() {
     AUTH_E2E_BASE_URL: baseUrl,
     AUTH_E2E_OUTPUT_DIR: outputDir,
   };
+  sensitiveValues.push(apiUrl, publishableKey, secretKey, mailpitUrl);
   process.env.AUTH_E2E_MAILPIT_URL = mailpitUrl;
   adminClient = createClient(apiUrl, secretKey, {
     auth: {
@@ -291,6 +344,9 @@ async function main() {
     },
   });
   const users = await createTemporaryUsers(emails);
+  sensitiveValues.push(
+    ...Object.values(users).flatMap(({ email, userId }) => [email, userId]),
+  );
   appEnv.AUTH_E2E_USERS = JSON.stringify(users);
 
   stage = "building the production Next.js application";
@@ -304,10 +360,16 @@ async function main() {
     {
       cwd: root,
       env: appEnv,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     },
   );
+  for (const stream of [nextServer.stdout, nextServer.stderr]) {
+    stream?.setEncoding("utf8");
+    stream?.on("data", (chunk) => {
+      nextServerLogs = `${nextServerLogs}${chunk}`.slice(-200_000);
+    });
+  }
   nextServer.once("error", () => undefined);
   await waitForHttp(`${baseUrl}/admin/login`, "Next.js production server", 90_000);
 
@@ -318,7 +380,11 @@ async function main() {
     ["test", "--config=playwright.auth.config.ts"],
     { env: appEnv, stdio: "inherit" },
   );
-  if (testResult.code !== 0) throw new Error("Playwright auth tests failed");
+  if (testResult.code !== 0) {
+    printRelevantLogLines("Next.js", nextServerLogs);
+    await printSupabaseAuthLogs();
+    throw new Error("Playwright auth tests failed");
+  }
 }
 
 try {

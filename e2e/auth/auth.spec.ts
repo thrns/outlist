@@ -113,6 +113,8 @@ async function expectNoStore(
 test("anonymous access redirects and keeps protected content absent", async ({ page }) => {
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
+  expect(response?.status()).toBe(200);
+  await expect(page.locator("body")).toContainText("Administrator sign in");
   await expect(page.getByRole("heading", { name: "Administrator sign in" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
   await expectNoStore(response);
