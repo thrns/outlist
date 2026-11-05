@@ -3,6 +3,14 @@ select no_plan();
 
 set local "request.jwt.claims" = '{"role":"service_role"}';
 
+select throws_ok(
+  $$select public.start_discovery_job(
+    'pg-test-invalid', 'pg-test-invalid-v1',
+    '[{"partition_key":"pg-test-invalid-range","provider":"github","query_text":"topic:outlist-test is:public","query_fingerprint":"pg-test-invalid-range-fp","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":"{}"}]'::jsonb
+  )$$,
+  '22023', null, 'partition date ranges must be JSON objects'
+);
+
 create temporary table discovery_test_job (job_id uuid);
 insert into discovery_test_job
 select public.start_discovery_job(
