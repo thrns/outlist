@@ -53,6 +53,39 @@ export function rateLimitUrl(): URL {
   return new URL("/rate_limit", GITHUB_API_ORIGIN);
 }
 
+const repositorySearchQualifiers = new Set([
+  "archived", "created", "fork", "forks", "in", "is", "language", "license",
+  "size", "stars", "topic", "pushed",
+]);
+
+export function validateRepositorySearchQuery(query: string): string {
+  const normalized = query.trim();
+  if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new TypeError("GitHub repository search query must be non-empty, at most 256 characters, and contain no control characters.");
+  }
+  const operators = normalized.match(/\b(?:AND|OR|NOT)\b/gi) ?? [];
+  if (operators.length > 5) throw new TypeError("GitHub search queries may contain at most five AND, OR, or NOT operators.");
+  for (const match of normalized.matchAll(/(?:^|\s)([A-Za-z][A-Za-z0-9-]*):([^\s]+)/g)) {
+    if (!repositorySearchQualifiers.has(match[1].toLowerCase())) {
+      throw new TypeError(`Unsupported GitHub repository search qualifier: ${match[1]}.`);
+    }
+  }
+  return normalized;
+}
+
+export function repositorySearchUrl(
+  query: string,
+  options: { page: number; perPage: number; sort?: string; order?: string },
+): URL {
+  const url = new URL("/search/repositories", GITHUB_API_ORIGIN);
+  url.searchParams.set("q", validateRepositorySearchQuery(query));
+  url.searchParams.set("per_page", String(options.perPage));
+  url.searchParams.set("page", String(options.page));
+  if (options.sort) url.searchParams.set("sort", options.sort);
+  if (options.order) url.searchParams.set("order", options.order);
+  return url;
+}
+
 export function expectedReleasesPath(owner: string, repo: string): string {
   return `${repositoryPath(owner, repo)}/releases`;
 }

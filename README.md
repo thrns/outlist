@@ -35,8 +35,11 @@ existing routes.
 | `bun run lint` | Run ESLint with the Next.js rules |
 | `bun run test` | Run Vitest tests |
 | `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
+| `bun run test:discovery-db` | Exercise the discovery queue against disposable local Supabase |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
+| `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
+| `bun run discover -- --plan initial --execute --max-queries 2 --max-pages 2 --max-candidates 200` | Run a bounded queue collection with server credentials |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -61,9 +64,10 @@ manager lockfiles.
 The existing component-based UI, design, CSS, and all 33 sample projects remain
 in place. Demo repository metrics are illustrative. Directory edits are stored
 in browser `localStorage`; they are not shared across users or devices. The
-admin and ingestion controls are demonstrations and are not connected to a
-database. A separate read-only GitHub API adapter can inspect one explicitly
-named repository; it does not discover candidates or persist records. `/admin`
+admin controls remain demonstrations and are not connected to a database. A
+separate GitHub adapter can inspect repositories and search approved query
+partitions. Its bounded discovery CLI persists private, unreviewed candidates
+and checkpoints to Supabase; it does not enrich or publish them. `/admin`
 requires Supabase Auth and a
 matching UUID in the private `public.admin_users` allowlist. See
 [ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
@@ -101,9 +105,20 @@ topics, project logos and alternatives, discovery queries, candidates, job
 history, submissions, moderation, editorial overrides, and an administrator
 allowlist. It seeds 11 categories and no sample projects. RLS and explicit
 grants expose only published catalog information to anonymous and ordinary
-authenticated users. Those roles cannot write projects, submissions, or logo
-objects. M0-03 adds invite-only admin OTP authentication, but the dashboard
-does not write to these tables.
+authenticated users. Those roles cannot read discovery state or write
+projects, submissions, or logo objects. The discovery CLI uses service-only
+transactional database functions; the dashboard does not write to these
+tables.
+
+The `initial` plan has ten topic and language partitions, each bounded by star
+bands and creation dates. It is a bounded sample, not an exhaustive GitHub
+crawl. GitHub Search allows at most 1,000 results per query and uses a separate
+rate-limit resource. The worker checkpoints each committed page, deduplicates
+by stable GitHub repository ID, stores page provenance, and fences stale workers with expiring
+leases. Saturated or incomplete queries are split into safe date ranges or
+left in a review state. Candidates remain distinct from canonical projects
+and repositories. See [Data pipeline](DATA_PIPELINE.md) for partition and
+recovery details.
 
 The `project-logos` bucket is public for approved assets, limited to 2 MiB and
 PNG/JPEG/WebP. Public bucket downloads bypass Storage object read policies, so
@@ -141,9 +156,10 @@ per-request UUID allowlist authorization, and real local browser verification
 for the demo admin route; it does not connect moderation or ingestion controls
 to production tables. Hosted Supabase configuration and hosted SMTP delivery
 remain unverified. The search RPC, server-side catalog integration, submission
-endpoint, project publication tools, and ingestion worker remain later
-milestones. GitHub Actions validates the app, rebuilds the local database, and
-runs isolated Chromium authentication checks without hosted credentials.
+endpoint, project publication tools, candidate enrichment, and recurring
+discovery remain later milestones. GitHub Actions validates the app, rebuilds
+the local database, tests queue transactions, and runs isolated Chromium
+authentication checks without hosted credentials.
 
 ## Environment variables
 
@@ -154,12 +170,14 @@ read only by the server-side/Bun source adapter when a client is created:
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — publishable client key
 - `SUPABASE_SECRET_KEY` — privileged server-only key
 - `GITHUB_TOKEN` — optional GitHub token for authenticated REST API reads and
-  higher rate limits; never expose it to browser code
+  the authenticated repository-search rate limit; never expose it to browser code
 
 The browser and cookie-aware server clients use only public credentials. The
 privileged client is marked server-only and disables session persistence. Do
 not set the GitHub token in a `NEXT_PUBLIC_` variable. The GitHub adapter uses
 `Authorization: Bearer`, `Accept: application/vnd.github+json`, and REST API
 version `2022-11-28`; its optional smoke command is network dependent and is
-excluded from the ordinary test suite. No Supabase or GitHub credentials are
-required by ordinary unit tests or CI validation.
+excluded from the ordinary test suite. Discovery dry-run and unit tests need
+no credentials. Database integration tests use disposable local Supabase keys
+generated by CI; ordinary CI never needs a live GitHub token or external
+GitHub API access.

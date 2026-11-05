@@ -53,7 +53,8 @@ This roadmap separates the current demo from planned platform capabilities.
   PostgreSQL, Mailpit, and the production Next.js browser flow only; it does
   not prove hosted SMTP delivery or hosted Auth behavior.
 - Admin moderation, project publishing, and sync controls still update only
-  browser `localStorage`; no production database writes are implemented.
+  browser `localStorage`; these administrator controls do not write to the
+  production database.
 
 ## M1-01 — GitHub REST API adapter
 
@@ -71,24 +72,56 @@ This roadmap separates the current demo from planned platform capabilities.
 
 ### Remaining limitations after M1-01
 
-- The adapter reads one explicitly named repository. Candidate discovery,
-  restartable Supabase queues, normalization, data persistence, scheduling,
-  quality checks, license verification, and publication are not implemented.
+- The M1-01 adapter read one explicitly named repository. M1-02 added bounded
+  candidate discovery and restartable Supabase queues; normalization,
+  enrichment, scheduling, quality checks, license verification, and
+  publication remain later work.
 - The optional CLI smoke test verifies only the requested repository and
   endpoints; it does not validate the future scheduled ingestion pipeline.
+
+## M1-02 — GitHub discovery and candidate queues (implemented)
+
+- Added a typed, endpoint-specific GitHub repository search method with
+  validated responses, stable repository IDs, page totals, incomplete-result
+  flags, provenance, and search-specific rate-limit metadata.
+- Added the small, versioned `initial` plan with topic and language partitions
+  bounded by star and creation-date ranges. Saturated partitions split across
+  adjacent date ranges when possible; unsafe work remains for review.
+- Persisted candidates, page provenance, counters, and cursors transactionally
+  in Supabase. Candidates deduplicate on `(provider, provider_repository_id)`;
+  rediscovery retains rejected or discarded review states.
+- Added atomic partition claims with leases and fencing tokens, bounded retries,
+  and recovery after worker interruption.
+- Added an explicit bounded Bun CLI, unit/pgTAP coverage, disposable Supabase
+  concurrency tests in CI, and operations documentation.
+- Kept candidates separate from canonical projects and repositories. This
+  milestone does not normalize, verify licenses, classify, fetch logos, or
+  publish listings.
+
+### Remaining limitations after M1-02
+
+- The ten-partition initial plan is a bounded topic and language sample.
+  GitHub Search has
+  indexing/scope limits, a 1,000-result window, and possible incomplete
+  results; the plan does not claim exhaustive GitHub coverage.
+- The worker is manually invoked and serial. It is not scheduled and does not
+  enrich or publish candidates. No live collection is run by ordinary CI.
+- Local PostgreSQL integration depends on a running Docker-compatible runtime;
+  GitHub Actions exercises the queue against disposable local Supabase.
 
 ## Later milestones
 
 - Implement server-side data access and replace browser-only persistence when
   the server and access-control model is ready.
-- **M1-02:** Discover GitHub repository candidates, collect them from approved
-  queries, and ingest through restartable Supabase queues.
-- Build later scheduled ingestion workflows with validation, provenance,
+- **M1-03:** Consume queued candidates and normalize verified repository
+  metadata into the canonical database without automatically publishing
+  projects.
+- Build later scheduled enrichment workflows with validation, provenance,
   idempotency, and operational reporting.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-These are plans only. The local schema and policies exist, but hosted Supabase
-deployment, a database-backed catalog, repository discovery and ingestion,
-production search, and database-backed moderation are not operational in the
-current demo.
+The local schema, service-only candidate queue, and bounded discovery worker
+are implemented. Hosted Supabase deployment, a database-backed catalog,
+candidate enrichment, production search, and database-backed moderation remain
+outside the current demo.

@@ -15,6 +15,9 @@ bun run supabase:db-lint
 bun run supabase:types
 ```
 
-Database tests live in `supabase/tests/` and run through pgTAP. GitHub Actions
-rebuilds the database from scratch, reapplies the category seed twice to check
-idempotency, runs the tests and lint, and checks generated types for drift.
+Database tests live in `supabase/tests/` and run through pgTAP. The CI database
+job also runs `bun run test:discovery-db` against local Supabase to exercise
+concurrent claims and transactional checkpoints through the service-role API.
+GitHub Actions rebuilds the database from scratch, reapplies the category seed
+twice to check idempotency, runs tests and lint, and checks generated types for
+drift.

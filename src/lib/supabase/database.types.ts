@@ -53,14 +53,14 @@ export type Database = {
                   ]
                 },"discovery_queries": {
                   Row: {
-                    "candidates_found": number,"created_at": string,"cursor": Json | null,"finished_at": string | null,"id": string,"last_error": string | null,"pages_fetched": number,"partition_key": string,"provider": string,"query_text": string,"started_at": string | null,"status": string,"updated_at": string
+                    "candidates_found": number,"created_at": string,"cursor": Json | null,"date_range": Json,"finished_at": string | null,"id": string,"incomplete_results": boolean,"intended_coverage": string,"job_id": string | null,"last_error": string | null,"lock_owner": string | null,"locked_at": string | null,"lease_expires_at": string | null,"lease_token": string | null,"max_attempts": number,"next_attempt_at": string | null,"parent_query_id": string | null,"pages_fetched": number,"partition_key": string,"plan_name": string,"plan_version": string,"provider": string,"query_fingerprint": string,"query_parameters": Json,"query_text": string,"retry_count": number,"started_at": string | null,"status": string,"total_count": number | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "candidates_found"?: number,"created_at"?: string,"cursor"?: Json | null,"finished_at"?: string | null,"id"?: string,"last_error"?: string | null,"pages_fetched"?: number,"partition_key": string,"provider": string,"query_text": string,"started_at"?: string | null,"status"?: string,"updated_at"?: string
+                    "candidates_found"?: number,"created_at"?: string,"cursor"?: Json | null,"date_range"?: Json,"finished_at"?: string | null,"id"?: string,"incomplete_results"?: boolean,"intended_coverage"?: string,"job_id"?: string | null,"last_error"?: string | null,"lock_owner"?: string | null,"locked_at"?: string | null,"lease_expires_at"?: string | null,"lease_token"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"parent_query_id"?: string | null,"pages_fetched"?: number,"partition_key": string,"plan_name"?: string,"plan_version"?: string,"provider": string,"query_fingerprint"?: string,"query_parameters"?: Json,"query_text": string,"retry_count"?: number,"started_at"?: string | null,"status"?: string,"total_count"?: number | null,"updated_at"?: string
                   }
                   Update: {
-                    "candidates_found"?: number,"created_at"?: string,"cursor"?: Json | null,"finished_at"?: string | null,"id"?: string,"last_error"?: string | null,"pages_fetched"?: number,"partition_key"?: string,"provider"?: string,"query_text"?: string,"started_at"?: string | null,"status"?: string,"updated_at"?: string
+                    "candidates_found"?: number,"created_at"?: string,"cursor"?: Json | null,"date_range"?: Json,"finished_at"?: string | null,"id"?: string,"incomplete_results"?: boolean,"intended_coverage"?: string,"job_id"?: string | null,"last_error"?: string | null,"lock_owner"?: string | null,"locked_at"?: string | null,"lease_expires_at"?: string | null,"lease_token"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"parent_query_id"?: string | null,"pages_fetched"?: number,"partition_key"?: string,"plan_name"?: string,"plan_version"?: string,"provider"?: string,"query_fingerprint"?: string,"query_parameters"?: Json,"query_text"?: string,"retry_count"?: number,"started_at"?: string | null,"status"?: string,"total_count"?: number | null,"updated_at"?: string
                   }
                   Relationships: [
                     
@@ -315,14 +315,14 @@ isOneToOne: false
                   ]
                 },"repository_candidates": {
                   Row: {
-                    "attempts": number,"canonical_url": string,"completed_at": string | null,"created_at": string,"discovery_query_id": string | null,"first_seen_at": string,"full_name": string,"id": string,"last_error": string | null,"last_seen_at": string,"lock_owner": string | null,"locked_at": string | null,"max_attempts": number,"next_attempt_at": string | null,"provider": string,"provider_repository_id": string,"queue_status": string,"repository_id": string | null,"source_record_id": string,"updated_at": string
+                    "attempts": number,"canonical_url": string,"completed_at": string | null,"created_at": string,"description": string | null,"discovery_query_id": string | null,"first_seen_at": string,"forks": number,"full_name": string,"id": string,"last_error": string | null,"last_seen_at": string,"lock_owner": string | null,"locked_at": string | null,"max_attempts": number,"next_attempt_at": string | null,"owner_login": string | null,"primary_language": string | null,"provider": string,"provider_created_at": string | null,"provider_pushed_at": string | null,"provider_repository_id": string,"provider_updated_at": string | null,"queue_status": string,"repository_id": string | null,"review_status": string,"source_license_summary": Json | null,"source_record_id": string,"stars": number,"topics": string[],"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "attempts"?: number,"canonical_url": string,"completed_at"?: string | null,"created_at"?: string,"discovery_query_id"?: string | null,"first_seen_at"?: string,"full_name": string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"provider": string,"provider_repository_id": string,"queue_status"?: string,"repository_id"?: string | null,"source_record_id": string,"updated_at"?: string
+                    "attempts"?: number,"canonical_url": string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"first_seen_at"?: string,"forks"?: number,"full_name": string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider": string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id": string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id": string,"stars"?: number,"topics"?: string[],"updated_at"?: string
                   }
                   Update: {
-                    "attempts"?: number,"canonical_url"?: string,"completed_at"?: string | null,"created_at"?: string,"discovery_query_id"?: string | null,"first_seen_at"?: string,"full_name"?: string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"provider"?: string,"provider_repository_id"?: string,"queue_status"?: string,"repository_id"?: string | null,"source_record_id"?: string,"updated_at"?: string
+                    "attempts"?: number,"canonical_url"?: string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"first_seen_at"?: string,"forks"?: number,"full_name"?: string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider"?: string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id"?: string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id"?: string,"stars"?: number,"topics"?: string[],"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -339,6 +339,38 @@ isOneToOne: true
       referencedColumns: ["id"]
     },{
       foreignKeyName: "repository_candidates_source_record_id_fkey"
+      columns: ["source_record_id"]
+isOneToOne: false
+      referencedRelation: "source_records"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"repository_candidate_sources": {
+                  Row: {
+                    "candidate_id": string,"created_at": string,"discovery_query_id": string,"fetched_at": string,"source_record_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "candidate_id": string,"created_at"?: string,"discovery_query_id": string,"fetched_at": string,"source_record_id": string
+                  }
+                  Update: {
+                    "candidate_id"?: string,"created_at"?: string,"discovery_query_id"?: string,"fetched_at"?: string,"source_record_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "repository_candidate_sources_candidate_id_fkey"
+      columns: ["candidate_id"]
+isOneToOne: false
+      referencedRelation: "repository_candidates"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_candidate_sources_discovery_query_id_fkey"
+      columns: ["discovery_query_id"]
+isOneToOne: false
+      referencedRelation: "discovery_queries"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_candidate_sources_source_record_id_fkey"
       columns: ["source_record_id"]
 isOneToOne: false
       referencedRelation: "source_records"
@@ -469,14 +501,14 @@ isOneToOne: false
                   ]
                 },"source_records": {
                   Row: {
-                    "created_at": string,"fetched_at": string,"http_status": number | null,"id": string,"provider": string,"raw_payload": Json | null,"record_kind": string,"repository_id": string | null,"reuse_context": string | null,"source_key": string,"source_url": string
+                    "created_at": string,"fetched_at": string,"http_status": number | null,"id": string,"provider": string,"raw_payload": Json | null,"record_kind": string,"repository_id": string | null,"reuse_context": string | null,"source_key": string,"source_metadata": Json,"source_url": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"fetched_at": string,"http_status"?: number | null,"id"?: string,"provider": string,"raw_payload"?: Json | null,"record_kind": string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key": string,"source_url": string
+                    "created_at"?: string,"fetched_at": string,"http_status"?: number | null,"id"?: string,"provider": string,"raw_payload"?: Json | null,"record_kind": string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key": string,"source_metadata"?: Json,"source_url": string
                   }
                   Update: {
-                    "created_at"?: string,"fetched_at"?: string,"http_status"?: number | null,"id"?: string,"provider"?: string,"raw_payload"?: Json | null,"record_kind"?: string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key"?: string,"source_url"?: string
+                    "created_at"?: string,"fetched_at"?: string,"http_status"?: number | null,"id"?: string,"provider"?: string,"raw_payload"?: Json | null,"record_kind"?: string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key"?: string,"source_metadata"?: Json,"source_url"?: string
                   }
                   Relationships: [
                     {
@@ -533,7 +565,30 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            [_ in never]: never
+            "claim_discovery_partitions": {
+              Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }
+              Returns: { "cursor": Json | null,"id": string,"incomplete_results": boolean,"lease_expires_at": string,"lease_token": string,"partition_key": string,"query_fingerprint": string,"query_parameters": Json,"query_text": string,"total_count": number | null }[]
+            }
+            "commit_discovery_page": {
+              Args: { "p_candidates": Json,"p_children"?: Json,"p_fetched_at": string,"p_http_status": number,"p_incomplete_results": boolean,"p_lease_seconds"?: number,"p_lease_token": string,"p_next_state": string,"p_page": number,"p_per_page": number,"p_query_fingerprint": string,"p_query_id": string,"p_source_metadata": Json,"p_source_url": string,"p_total_count": number,"p_worker_id": string }
+              Returns: Json
+            }
+            "fail_discovery_partition": {
+              Args: { "p_error_summary": string,"p_query_id": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_lease_token": string,"p_worker_id": string }
+              Returns: Json
+            }
+            "finish_discovery_job": {
+              Args: { "p_error_summary"?: string | null,"p_job_id": string,"p_status": string }
+              Returns: undefined
+            }
+            "release_discovery_partition": {
+              Args: { "p_lease_token": string,"p_query_id": string,"p_worker_id": string }
+              Returns: undefined
+            }
+            "start_discovery_job": {
+              Args: { "p_partitions": Json,"p_plan_name": string,"p_plan_version": string }
+              Returns: string
+            }
           }
           Enums: {
             [_ in never]: never

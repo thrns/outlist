@@ -1,5 +1,5 @@
 begin;
-select plan(66);
+select plan(67);
 
 -- Schema presence and key relationship constraints.
 select has_table('public', 'projects', 'projects table exists');
@@ -17,6 +17,7 @@ select has_table('public', 'project_logos', 'project_logos table exists');
 select has_table('public', 'project_alternatives', 'project_alternatives table exists');
 select has_table('public', 'discovery_queries', 'discovery_queries table exists');
 select has_table('public', 'repository_candidates', 'repository_candidates table exists');
+select has_table('public', 'repository_candidate_sources', 'candidate provenance link table exists');
 select has_table('public', 'ingestion_jobs', 'ingestion_jobs table exists');
 select has_table('public', 'ingestion_items', 'ingestion_items table exists');
 select has_table('public', 'submissions', 'submissions table exists');
@@ -58,7 +59,7 @@ select ok(
       ('tags'), ('project_tags'), ('source_records'), ('releases'),
       ('repository_snapshots'), ('repository_topics'), ('repository_languages'),
       ('project_logos'), ('project_alternatives'), ('discovery_queries'),
-      ('repository_candidates'), ('ingestion_jobs'), ('ingestion_items'),
+      ('repository_candidates'), ('repository_candidate_sources'), ('ingestion_jobs'), ('ingestion_items'),
       ('submissions'), ('review_queue'), ('editorial_overrides'), ('admin_users')
     ) as application_table(table_name)
     join pg_class c on c.relname = application_table.table_name

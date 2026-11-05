@@ -47,6 +47,47 @@ export const githubRepositorySchema = z.object({
   license: githubLicenseSchema.nullable().optional(),
 });
 
+// Search results are intentionally less strict than GET /repos/{owner}/{repo}:
+// the Search API omits or varies full-repository fields for some results.
+export const githubSearchRepositorySchema = z.object({
+  id: positiveInteger,
+  node_id: z.string().min(1),
+  name: z.string().min(1),
+  full_name: z.string().min(3),
+  owner: z.object({
+    id: positiveInteger,
+    node_id: z.string().min(1).optional(),
+    login: z.string().min(1),
+    type: z.string().optional(),
+  }),
+  html_url: httpsUrl,
+  url: httpsUrl.optional(),
+  description: z.string().nullable().optional(),
+  homepage: z.string().nullable().optional(),
+  topics: z.array(z.string()).optional(),
+  language: z.string().nullable().optional(),
+  stargazers_count: nonNegativeInteger,
+  forks_count: nonNegativeInteger,
+  watchers_count: nonNegativeInteger.optional(),
+  open_issues_count: nonNegativeInteger.optional(),
+  archived: z.boolean().optional(),
+  disabled: z.boolean().optional(),
+  fork: z.boolean(),
+  private: z.boolean(),
+  visibility: z.string().optional(),
+  default_branch: z.string().optional(),
+  created_at: z.iso.datetime(),
+  updated_at: z.iso.datetime(),
+  pushed_at: nullableDate.optional(),
+  license: githubLicenseSchema.nullable().optional(),
+});
+
+export const githubRepositorySearchSchema = z.object({
+  total_count: nonNegativeInteger,
+  incomplete_results: z.boolean(),
+  items: z.array(githubSearchRepositorySchema),
+});
+
 export const githubLanguagesSchema = z.record(z.string(), nonNegativeInteger);
 export const githubTopicsSchema = z.object({ names: z.array(z.string()) });
 
@@ -82,5 +123,7 @@ export const githubRateLimitSchema = z.object({
 });
 
 export type GitHubRepositoryPayload = z.infer<typeof githubRepositorySchema>;
+export type GitHubSearchRepositoryPayload = z.infer<typeof githubSearchRepositorySchema>;
+export type GitHubRepositorySearchPayload = z.infer<typeof githubRepositorySearchSchema>;
 export type GitHubLicensePayload = z.infer<typeof githubLicenseSchema>;
 export type GitHubReleasePayload = z.infer<typeof githubReleaseSchema>;

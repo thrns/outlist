@@ -3,6 +3,7 @@ export const GITHUB_API_ORIGIN = "https://api.github.com" as const;
 
 export type GitHubResourceType =
   | "repository"
+  | "repository_search"
   | "languages"
   | "topics"
   | "license"
@@ -120,6 +121,56 @@ export interface GitHubRepository {
   updatedAt: string;
   pushedAt: SourceField<string>;
   license: SourceField<GitHubLicenseMetadata>;
+}
+
+/** Search returns a deliberately smaller, endpoint-specific repository shape. */
+export interface GitHubSearchRepository {
+  id: number;
+  nodeId: string;
+  owner: { id: number; nodeId: SourceField<string>; login: string; type: SourceField<string> };
+  name: string;
+  fullName: string;
+  canonicalUrl: string;
+  description: SourceField<string>;
+  homepage: SourceField<string>;
+  topics: SourceField<string[]>;
+  primaryLanguage: SourceField<string>;
+  starCount: number;
+  forkCount: number;
+  watcherCount: SourceField<number>;
+  openIssueCount: SourceField<number>;
+  isArchived: SourceField<boolean>;
+  isDisabled: SourceField<boolean>;
+  isFork: boolean;
+  isPrivate: boolean;
+  visibility: SourceField<string>;
+  defaultBranch: SourceField<string>;
+  createdAt: string;
+  updatedAt: string;
+  pushedAt: SourceField<string>;
+  license: SourceField<GitHubLicenseMetadata>;
+}
+
+export type GitHubSearchSort = "stars" | "forks" | "help-wanted-issues" | "updated";
+export type GitHubSearchOrder = "asc" | "desc";
+
+export interface GitHubSearchOptions extends GitHubRequestOptions {
+  page?: number;
+  perPage?: number;
+  sort?: GitHubSearchSort;
+  order?: GitHubSearchOrder;
+}
+
+export interface GitHubRepositorySearchPage {
+  totalCount: number;
+  incompleteResults: boolean;
+  items: GitHubSearchRepository[];
+}
+
+export interface GitHubRepositorySearchResult {
+  kind: "ok";
+  data: GitHubRepositorySearchPage;
+  provenance: GitHubProvenance<GitHubRepositorySearchPage>;
 }
 
 export interface GitHubLicenseMetadata {

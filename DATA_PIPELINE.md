@@ -7,11 +7,11 @@ contains 33 illustrative project records and is validated by
 `bun run validate:data` and Vitest. The UI searches and sorts this data in the
 browser. Submission, moderation, and sync actions are local demo behavior.
 
-The M0-02 production schema is present, but it starts with no project listings.
-The only seeded rows are the 11 category taxonomy records. M1-01 adds a
-read-only GitHub REST API adapter and a one-repository inspection CLI. There is
-still no repository discovery, scheduled job, project catalog write, or
-operational ingestion pipeline.
+The production schema starts with no project listings. The only seeded rows
+are the 11 category taxonomy records. M1-01 adds a read-only GitHub REST API
+adapter. M1-02 adds a bounded repository discovery worker that writes private,
+unreviewed candidates and durable page checkpoints. Neither milestone writes
+canonical projects or repositories.
 
 ## M1-01 GitHub source adapter
 
@@ -97,12 +97,13 @@ GITHUB_TOKEN=... bun run github:smoke -- vercel/next.js
 
 The CLI validates `owner/name`, displays only selected fields, and never writes
 to Supabase. Ordinary unit tests use mocked HTTP responses and do not need
-network access or a token. The adapter currently retrieves one known
-repository at a time; bulk discovery, candidate queues, normalization,
-provenance persistence, metric snapshots, scheduled imports, license
-verification, and publication remain later work.
+network access or a token. The M1-01 adapter retrieved one known repository at
+a time. M1-02 adds bounded repository search and candidate persistence;
+normalization, metric snapshots, scheduled imports, license verification, and
+publication remain later work.
 
 Official references: [repository endpoints](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28),
+[repository search](https://docs.github.com/en/rest/search/search?apiVersion=2022-11-28),
 [release endpoints](https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28),
 [license endpoints](https://docs.github.com/en/rest/licenses/licenses?apiVersion=2022-11-28),
 [authentication](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api?apiVersion=2022-11-28),
@@ -111,11 +112,82 @@ Official references: [repository endpoints](https://docs.github.com/en/rest/repo
 [conditional requests](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api?apiVersion=2022-11-28),
 and [rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2022-11-28).
 
-## Planned ingestion
+## M1-02 GitHub discovery and candidate queue
 
-The later ingestion process is a scheduled Bun worker with explicit source
-adapters. The schema is ready to hold the following records, but no worker
-executes these steps yet:
+The standalone `scripts/discover.ts` Bun worker executes only an approved
+`initial` plan. The plan contains ten deterministic partitions: three topic
+groups (`developer-tools`, `self-hosted`, `ai-machine-learning`) and two
+language groups (`TypeScript`, `Python`), each split into `stars:0..99` and
+`stars:>=100`. All partitions add `is:public`, `fork:false`, and a bounded
+repository creation range from 2020-01-01 through 2026-11-05. Topic and
+language partitions may overlap, so candidates are deduplicated by provider
+repository ID. Each partition records a stable key, plan version, fingerprint
+of the exact query and parameters, result order, per-page size, date
+boundaries, and intended coverage. The plan is a representative sample, not
+exhaustive GitHub coverage.
+
+GitHub Search returns at most 100 results per page and at most 1,000 results
+per query. Its documentation also describes a limited search scope, timeouts
+with `incomplete_results`, and separate search rate limits. The worker checks
+`total_count` and `incomplete_results`; it never records those partitions as
+exhausted. It bisects creation-date ranges into adjacent, non-overlapping child
+queries when a split is possible. A saturated single-day range, or a result
+that cannot be split safely, remains `needs_review`. Overlapping results are
+deduplicated by stable numeric GitHub repository ID, while every page
+observation retains source provenance.
+
+The default command only prints the plan and makes no database writes:
+
+```bash
+bun run discover -- --plan initial --dry-run
+```
+
+Real writes require `--execute`, validated server-only Supabase configuration,
+and bounded limits. Work is serial by default; limits are capped at 20 query
+partitions, 10 pages, and 1,000 search results per run:
+
+```bash
+bun run discover -- --plan initial --execute --max-queries 2 --max-pages 2 --max-candidates 200
+bun run discover -- --plan initial --execute --resume --max-queries 2 --max-pages 2 --max-candidates 200
+```
+
+`--resume` makes checkpoint reuse explicit. Executions also preserve compatible
+checkpoints by default; a changed fingerprint resets that partition before it
+can resume. If `--max-candidates` is below the normal 100-result page size, the
+worker lowers `per_page` to that cap and fingerprints the changed query
+parameters. A worker claim uses PostgreSQL row locking and `SKIP LOCKED`, a
+worker ID, expiring lease, and random fencing token. A stale worker cannot
+commit after expiry or after another worker reclaims the row. Retry eligibility
+and safe error summaries are persisted. GitHub's `search` resource headers are
+stored separately from the core API budget. Long retry delays are scheduled in
+PostgreSQL rather than causing a tight retry loop.
+
+Each committed page is one database function transaction. It inserts compact
+page provenance (no raw search payload), upserts validated candidate metadata,
+links candidates to the page source, updates counters, and advances the page
+cursor together. A failed transaction advances none of these. Repeated page
+commits do not repeat counters. Candidate identity is
+`(provider, provider_repository_id)`. Renames update descriptive metadata;
+rejected and discarded review states are preserved. GitHub's license summary
+is source metadata only and never sets `verified_open_source`.
+
+The migration adds checkpoint and lease fields to `discovery_queries`, search
+metadata and review state to `repository_candidates`, compact `source_metadata`
+to `source_records`, and the `repository_candidate_sources` provenance join.
+Atomic queue functions are callable only by `service_role`; operational tables
+remain unavailable to browser roles under RLS and grants. Successful discovery
+creates no `projects` or `repositories` rows. Candidate review, normalization,
+license verification, classification, enrichment, logos, and publication are
+subsequent milestones.
+
+Queue implementation references: [PostgreSQL row locking and `SKIP LOCKED`](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE),
+[Supabase database function security](https://supabase.com/docs/guides/database/functions#secure-a-database-function),
+and [GitHub Search API limits](https://docs.github.com/en/rest/search/search?apiVersion=2022-11-28).
+
+## Planned enrichment
+
+The later enrichment process is a separate Bun worker with explicit source
+adapters. M1-02 only discovers and queues candidates. Later milestones may:
 
 1. Fetch repository metadata from approved source APIs with rate-limit handling.
 2. Normalize source records into the catalog model and validate them with Zod.
@@ -130,10 +202,9 @@ executes these steps yet:
    open-source license, an available primary repository, and at least one
    category.
 
-Runs should be idempotent and observable, and invalid records should not replace
-valid catalog data. The GitHub read adapter is implemented, but this workflow
-will be designed and implemented in later milestones; none of its steps
-currently runs against Supabase.
+Later runs should be idempotent and observable, and invalid records should not
+replace valid catalog data. M1-02 does not normalize candidates, verify their
+licenses, or publish a listing.
 
 ## Database workflow
 
@@ -155,7 +226,10 @@ illustrative `src/data/projects.json` and `src/data/categories.json` remain in
 place for demo compatibility; no sample project is imported into production
 tables.
 
-Run `bun run supabase:db-test` for pgTAP authorization and integrity tests,
+Run `bun run supabase:db-test` for pgTAP authorization, integrity, transaction,
+checkpoint, retry, and RLS tests. CI also runs `bun run test:discovery-db`
+against disposable local Supabase to exercise concurrent claims, fencing,
+provenance, and idempotent page commits. Run
 `bun run supabase:db-lint` for local database linting, and
 `bun run supabase:types` to regenerate `src/lib/supabase/database.types.ts`
 from the local database. CI starts the pinned local Supabase stack on GitHub
@@ -168,8 +242,8 @@ relationships only. Source records, candidate queues, job history,
 submissions, review queue entries, editorial overrides, and administrator
 allowlisting have no client grants or read policies. Direct submission writes
 are disabled pending a validated server endpoint. Administrator authentication
-is implemented; the ingestion worker and database-backed UI belong to later
-milestones.
+and the bounded candidate-discovery worker are implemented; enrichment and
+database-backed UI belong to later milestones.
 
 Logo files use a public `project-logos` bucket with a 2 MiB limit and PNG,
 JPEG, and WebP MIME restrictions. Public bucket downloads bypass object RLS,
@@ -179,6 +253,6 @@ only after editorial approval. Record safe attribution on the approved logo
 metadata. Revocation must remove the object through the Storage API; deleting
 only its Postgres metadata does not delete the stored object.
 
-Scheduled execution, source credential provisioning, logo downloading, remote
-migration deployment, publication workflows, search RPC, and public UI
-integration are outside M1-01.
+Recurring scheduling, source credential provisioning, logo downloading,
+remote migration deployment, publication workflows, search RPC, and public UI
+integration are outside M1-02.

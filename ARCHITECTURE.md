@@ -15,9 +15,10 @@ migrations, a normalized PostgreSQL catalog, database policies, and a
 JSON catalog. The admin route uses Supabase Auth for invite-only OTP sign-in
 and authorization, while its moderation controls remain localStorage
 demonstrations. A standalone, read-only GitHub REST adapter and local
-single-repository inspection CLI are implemented. They do not write to
-Supabase; no discovery or ingestion worker and no database-backed public pages
-run yet.
+single-repository inspection CLI are implemented. M1-02 extends the adapter
+with repository search and adds a separate, bounded Bun worker that writes
+unreviewed candidates and durable checkpoints to Supabase. The public UI still
+does not use the database.
 
 ## Intended system
 
@@ -31,23 +32,36 @@ Browser
             ├─ Supabase PostgreSQL: catalog, provenance, moderation, and ingestion state
             └─ Supabase Storage: approved project logos
 
-Scheduled Bun ingestion worker
-  └─ source adapters → validation/normalization → PostgreSQL + Storage
+Standalone Bun discovery worker (M1-02)
+  └─ GitHub Search API → validated candidate pages → transactional PostgreSQL queue
+
+Later enrichment worker
+  └─ candidate queue → source adapters → validation/normalization → PostgreSQL + Storage
 ```
 
 The browser/server clients and database schema are implemented, but the public
-website and ingestion worker do not use them yet. The standalone GitHub
-adapter can read repository metadata by path or stable numeric repository ID,
-languages, topics, detected license metadata, releases, and rate-limit status.
-It runs independently of Next.js cookies or browser sessions. Its numeric
-provider ID is stable across repository renames, and each result carries typed
-data and source provenance. It has no Supabase client dependency and makes
-only `GET` requests. A Bun worker will be a separate scheduled process for
-repository ingestion, not another web service. PostgreSQL owns normalized
-catalog data and the indexed search document; M2-01 will add the public search
-RPC. Storage is limited to approved logo assets. Permitted source payloads are
-stored as provenance-linked JSON in the private `source_records` table by a
-future ingestion milestone.
+website does not use them yet. The GitHub adapter reads repository metadata by
+path or stable numeric repository ID, languages, topics, detected license
+metadata, releases, repository search results, and rate-limit status. Search
+results use an endpoint-specific schema because GitHub's Search API does not
+guarantee every field returned by the full repository endpoint. Numeric
+provider IDs remain stable across renames. The adapter makes only `GET`
+requests.
+
+The M1-02 Bun worker is a separate CLI process, not a web endpoint. It accepts
+only the ten topic and language partitions in the versioned `initial` plan,
+uses conservative serial claims, and persists candidates and page provenance
+through narrow service-role SQL functions. `discovery_queries` holds the query
+fingerprint,
+cursor, retry time, lease, and fencing token. Each page commit updates source
+provenance, candidates, counts, and the checkpoint in one PostgreSQL
+transaction. The 2020–2026 topic and language sample is intentionally bounded
+and is not an exhaustive GitHub crawl. Search results above the 1,000-result
+window or marked incomplete are split by adjacent creation-date ranges when possible; otherwise
+they are left for review. Candidate rows remain separate from canonical
+projects and repositories. Later milestones will consume them. PostgreSQL
+owns normalized catalog data and the indexed search document; M2-01 will add
+the public search RPC. Storage remains limited to approved logo assets.
 
 The GitHub client reads optional `GITHUB_TOKEN` configuration at construction
 time, sends it only as `Authorization: Bearer`, and uses GitHub REST API
@@ -131,5 +145,8 @@ with `bun run supabase start`, rebuild a clean database with
 `bun run supabase db reset`, run pgTAP tests with `bun run supabase:db-test`,
 and lint with `bun run supabase:db-lint`. Generate types after migrations with
 `bun run supabase:types`. `bun run supabase status` prints local keys and
-`bun run supabase stop` shuts services down. No hosted project or production
-credential is required.
+`bun run supabase stop` shuts services down. Run
+`bun run test:discovery-db` against the disposable local database to verify
+transactional page commits, resume cursors, concurrent claims, expired leases,
+stale-worker fencing, retry scheduling, and RLS. No hosted project or
+production credential is required.

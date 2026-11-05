@@ -7,10 +7,12 @@ import {
   rateLimitUrl,
   releasesUrl,
   repositoryByIdUrl,
+  repositorySearchUrl,
   repositoryUrl,
   topicsUrl,
   validateRepositoryId,
   validateRepositoryLocator,
+  validateRepositorySearchQuery,
 } from "./endpoints";
 import { GitHubApiError, redactDiagnostic, statusError } from "./errors";
 import {
@@ -29,10 +31,13 @@ import {
   githubRateLimitSchema,
   githubReleaseListSchema,
   githubRepositorySchema,
+  githubRepositorySearchSchema,
   githubTopicsSchema,
   type GitHubLicensePayload,
   type GitHubReleasePayload,
   type GitHubRepositoryPayload,
+  type GitHubRepositorySearchPayload,
+  type GitHubSearchRepositoryPayload,
 } from "./schemas";
 import {
   GITHUB_API_VERSION,
@@ -49,6 +54,10 @@ import {
   type GitHubReleaseFetchResult,
   type GitHubReleaseOptions,
   type GitHubRepository,
+  type GitHubRepositorySearchPage,
+  type GitHubRepositorySearchResult,
+  type GitHubSearchOptions,
+  type GitHubSearchRepository,
   type GitHubRequestOptions,
   type GitHubTopicFetchResult,
   type GitHubTopicsOptions,
@@ -111,6 +120,27 @@ export class GitHubClient {
     this.#now = options.now ?? Date.now;
     this.#random = options.random ?? Math.random;
     this.#sleep = options.sleep ?? sleep;
+  }
+
+  async searchRepositories(
+    query: string,
+    options: GitHubSearchOptions = {},
+  ): Promise<GitHubRepositorySearchResult> {
+    const normalizedQuery = validateRepositorySearchQuery(query);
+    const settings = validateSearchOptions(options);
+    const url = repositorySearchUrl(normalizedQuery, settings);
+    const response = await this.#requestJson(
+      url,
+      "repository_search",
+      githubRepositorySearchSchema,
+      (payload) => toRepositorySearchPage(payload),
+      { signal: options.signal },
+      `github:search:repositories:${encodeURIComponent(normalizedQuery)}:page:${settings.page}`,
+    );
+    if (response.result.kind !== "ok") {
+      throw new GitHubApiError("malformed_payload", "GitHub returned an unexpected not-modified result for repository search.");
+    }
+    return response.result;
   }
 
   async getRepository(
@@ -710,6 +740,55 @@ function toRepository(payload: GitHubRepositoryPayload): GitHubRepository {
   };
 }
 
+function toRepositorySearchPage(payload: GitHubRepositorySearchPayload): GitHubRepositorySearchPage {
+  return {
+    totalCount: payload.total_count,
+    incompleteResults: payload.incomplete_results,
+    items: payload.items.map(toSearchRepository),
+  };
+}
+
+function toSearchRepository(payload: GitHubSearchRepositoryPayload): GitHubSearchRepository {
+  const record = payload as unknown as Record<string, unknown>;
+  const owner = payload.owner as unknown as Record<string, unknown>;
+  const rawLicense = payload.license;
+  return {
+    id: payload.id,
+    nodeId: payload.node_id,
+    owner: {
+      id: payload.owner.id,
+      nodeId: sourceField<string>(owner, "node_id"),
+      login: payload.owner.login,
+      type: sourceField<string>(owner, "type"),
+    },
+    name: payload.name,
+    fullName: payload.full_name,
+    canonicalUrl: payload.html_url,
+    description: sourceField<string>(record, "description"),
+    homepage: sourceField<string>(record, "homepage"),
+    topics: sourceField<string[]>(record, "topics"),
+    primaryLanguage: sourceField<string>(record, "language"),
+    starCount: payload.stargazers_count,
+    forkCount: payload.forks_count,
+    watcherCount: sourceField<number>(record, "watchers_count"),
+    openIssueCount: sourceField<number>(record, "open_issues_count"),
+    isArchived: sourceField<boolean>(record, "archived"),
+    isDisabled: sourceField<boolean>(record, "disabled"),
+    isFork: payload.fork,
+    isPrivate: payload.private,
+    visibility: sourceField<string>(record, "visibility"),
+    defaultBranch: sourceField<string>(record, "default_branch"),
+    createdAt: payload.created_at,
+    updatedAt: payload.updated_at,
+    pushedAt: sourceField<string>(record, "pushed_at"),
+    license: rawLicense === undefined
+      ? { state: "absent" }
+      : rawLicense === null
+        ? { state: "null" }
+        : { state: "present", value: toLicense(rawLicense) },
+  };
+}
+
 function toLicense(payload: GitHubLicensePayload): GitHubLicenseMetadata {
   const record = payload as unknown as Record<string, unknown>;
   return {
@@ -883,6 +962,36 @@ function validatePaginationOptions(options: GitHubPaginationOptions): {
     throw new TypeError("GitHub pagination maxItems must be an integer from 0 to 10000.");
   }
   return { perPage, maxPages, maxItems };
+}
+
+function validateSearchOptions(options: GitHubSearchOptions): {
+  page: number;
+  perPage: number;
+  sort?: "stars" | "forks" | "help-wanted-issues" | "updated";
+  order?: "asc" | "desc";
+} {
+  const page = options.page ?? 1;
+  const perPage = options.perPage ?? 100;
+  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 100) {
+    throw new TypeError("GitHub repository search perPage must be an integer from 1 to 100.");
+  }
+  const maxPage = Math.floor(1_000 / perPage);
+  if (!Number.isInteger(page) || page < 1 || page > maxPage) {
+    throw new TypeError(`GitHub repository search page must be an integer from 1 to ${maxPage} for this page size.`);
+  }
+  const validSorts = ["stars", "forks", "help-wanted-issues", "updated"];
+  if (options.sort !== undefined && !validSorts.includes(options.sort)) {
+    throw new TypeError("GitHub repository search sort is invalid.");
+  }
+  if (options.order !== undefined && options.order !== "asc" && options.order !== "desc") {
+    throw new TypeError("GitHub repository search order must be asc or desc.");
+  }
+  return {
+    page,
+    perPage,
+    ...(options.sort ? { sort: options.sort } : {}),
+    ...(options.order ? { order: options.order } : {}),
+  };
 }
 
 function validatedNextPage(nextLink: string, expectedPaths: readonly string[], seen: Set<string>): URL {
