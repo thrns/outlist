@@ -12,6 +12,7 @@ export type GitHubErrorKind =
   | "network"
   | "malformed_payload"
   | "unexpected_content_type"
+  | "response_too_large"
   | "pagination"
   | "request";
 

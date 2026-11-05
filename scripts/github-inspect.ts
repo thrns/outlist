@@ -110,18 +110,25 @@ export async function inspectRepository(args: InspectArguments): Promise<string>
     output.push(`Language bytes: ${languages.kind === "ok" ? formatByteCounts(languages.data) : "unchanged (304)"}`);
   }
   if (args.includeReleases) {
-    const releases = await client.getRepositoryReleases(args.owner, args.repo, { perPage: 20, maxPages: 1, maxItems: 20 });
-    if (releases.kind === "not_modified") {
+    // The inspection CLI intentionally previews only one page; the aggregate
+    // client method keeps its complete-pagination guarantee for data callers.
+    const releasePages = client.iterateRepositoryReleasePages(args.owner, args.repo, { perPage: 20 });
+    const first = await releasePages.next();
+    await releasePages.return(undefined);
+    if (first.done) throw new GitHubApiError("malformed_payload", "GitHub did not return a first release page.");
+    const firstPage = first.value;
+    if (firstPage.kind === "not_modified") {
       output.push("Recent releases: unchanged (304); no cached release body in this CLI session.");
     } else {
-      const recent = releases.data.slice(0, 5);
-      output.push(`Recent releases (${releases.data.length} retrieved):`);
+      const recent = firstPage.data.slice(0, 5);
+      output.push(`Recent releases (${firstPage.data.length} retrieved from the first page):`);
       for (const release of recent) {
         const name = release.name.state === "present" ? release.name.value : release.tagName;
         output.push(`  ${release.tagName} — ${name} — ${release.publishedAt.state === "present" ? release.publishedAt.value : "date not reported"}`);
       }
       if (!recent.length) output.push("  none returned");
     }
+    output.push("Release results are limited to the first page and may not represent all releases.");
   }
   output.push(`Fetched: ${result.provenance.fetchedAt} (HTTP ${result.provenance.httpStatus}, API ${result.provenance.apiVersion})`);
   return output.join("\n");

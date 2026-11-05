@@ -404,6 +404,124 @@ describe("GitHub REST adapter", () => {
     await expect(client(timeoutFetch, { timeoutMs: 5, maxRetries: 0 }).getRepository("vercel", "next.js")).rejects.toMatchObject({ kind: "timeout" });
   });
 
+  it("times out when a server returns headers but stalls during its JSON body", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const stalled = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      cancel,
+    }), { headers: { "content-type": "application/json" } });
+    const mock = mockFetch(stalled);
+
+    try {
+      const pending = client(mock.fetch, { timeoutMs: 20, maxElapsedTimeMs: 500, maxRetries: 0 })
+        .getRepository("vercel", "next.js");
+      const rejection = expect(pending).rejects.toMatchObject({ kind: "timeout" });
+      await vi.advanceTimersByTimeAsync(20);
+      await rejection;
+      expect(cancel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps caller cancellation effective while reading a response body", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const stalled = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      cancel,
+    }), { headers: { "content-type": "application/json" } });
+    const mock = mockFetch(stalled);
+    const controller = new AbortController();
+    try {
+      const pending = client(mock.fetch, { timeoutMs: 1_000, maxRetries: 0 })
+        .getRepository("vercel", "next.js", { signal: controller.signal });
+      const rejection = expect(pending).rejects.toMatchObject({ kind: "aborted" });
+      setTimeout(() => controller.abort(), 10);
+      await vi.advanceTimersByTimeAsync(10);
+      await rejection;
+      expect(cancel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects oversized success and error bodies with a safe structured error", async () => {
+    const oversizedSuccess = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1));
+        controller.close();
+      },
+    }), { headers: { "content-type": "application/json" } });
+    await expect(client(mockFetch(oversizedSuccess).fetch, { maxRetries: 0 })
+      .getRepository("vercel", "next.js")).rejects.toMatchObject({
+        kind: "response_too_large",
+        status: 200,
+      });
+
+    const oversizedError = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(32 * 1024 + 1));
+        controller.close();
+      },
+    }), { status: 401, headers: { "content-type": "application/json" } });
+    await expect(client(mockFetch(oversizedError).fetch, { maxRetries: 0 })
+      .getRepository("vercel", "next.js")).rejects.toMatchObject({
+        kind: "response_too_large",
+        status: 401,
+      });
+  });
+
+  it("retries transient response-body read failures within the retry bound", async () => {
+    let attempts = 0;
+    const sleep = vi.fn(async () => {});
+    const fetch = (async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.error(new Error("socket reset while reading body"));
+          },
+        }), { headers: { "content-type": "application/json" } });
+      }
+      return repoResponse();
+    }) as typeof globalThis.fetch;
+
+    const result = await client(fetch, { maxRetries: 1, random: () => 0, sleep }).getRepository("vercel", "next.js");
+    expect(result.kind).toBe("ok");
+    expect(attempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies the full elapsed-time budget to response-body reads", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const stalled = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+      cancel,
+    }), { headers: { "content-type": "application/json" } });
+    const mock = mockFetch(stalled);
+
+    try {
+      const pending = client(mock.fetch, { timeoutMs: 1_000, maxElapsedTimeMs: 25, maxRetries: 0 })
+        .getRepository("vercel", "next.js");
+      const rejection = expect(pending).rejects.toMatchObject({ kind: "timeout" });
+      await vi.advanceTimersByTimeAsync(25);
+      await rejection;
+      expect(mock.calls).toHaveLength(1);
+      expect(cancel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries network errors within the configured bound", async () => {
     let attempts = 0;
     const fetch = (async () => {
@@ -484,6 +602,45 @@ describe("GitHub REST adapter", () => {
     expect(result).toBe(1);
     expect(stderr).toHaveBeenCalled();
     stderr.mockRestore();
+  });
+
+  it("inspects only the first release page when GitHub provides a next-page link", async () => {
+    const firstPage = Array.from({ length: 6 }, (_, index) => ({
+      ...releaseFixture,
+      id: releaseFixture.id + index,
+      tag_name: `v16.${index}.0`,
+      name: `Next.js 16.${index}`,
+    }));
+    const mock = mockFetch((url) => {
+      if (url.pathname === "/repos/vercel/next.js") return repoResponse();
+      if (url.pathname.endsWith("/license")) return response({ license: repositoryFixture.license });
+      if (url.pathname.endsWith("/releases")) {
+        return response(firstPage, 200, {
+          link: `<https://api.github.com/repositories/${repositoryFixture.id}/releases?per_page=20&page=2>; rel="next"`,
+        });
+      }
+      throw new Error(`Unexpected URL ${url.href}`);
+    });
+    vi.stubGlobal("fetch", mock.fetch);
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const exitCode = await runInspectCli(["vercel/next.js", "--releases"]);
+      const output = String(stdout.mock.calls[0]?.[0] ?? "");
+      expect(exitCode).toBe(0);
+      expect(output).toContain("first page");
+      expect(output).toContain("limited to the first page and may not represent all releases");
+      expect(output).toContain("v16.4.0");
+      expect(output).not.toContain("v16.5.0");
+      expect(mock.calls.filter((call) => call.url.includes("/releases"))).toHaveLength(1);
+      expect(mock.calls.map((call) => call.url)).toEqual([
+        "https://api.github.com/repos/vercel/next.js",
+        "https://api.github.com/repos/vercel/next.js/license",
+        "https://api.github.com/repos/vercel/next.js/releases?per_page=20",
+      ]);
+    } finally {
+      stdout.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("uses only GET requests against GitHub and does not perform database or publication writes", async () => {

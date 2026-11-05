@@ -56,7 +56,8 @@ detect loops, and enforce caller-configurable limits (default: 10 pages and
 1,000 items; GitHub's page size is capped at 100). The
 `iterateRepositoryTopicPages` and `iterateRepositoryReleasePages` methods allow
 page-at-a-time consumption; their aggregate methods return bounded results and
-per-page provenance.
+per-page provenance. The inspection CLI previews up to five releases from the
+first 20-item page only; it says so in its output and does not fetch later pages.
 
 Rate-limit metadata includes `x-ratelimit-limit`, `x-ratelimit-remaining`,
 `x-ratelimit-reset`, `x-ratelimit-resource`, and `Retry-After`. The client
@@ -64,9 +65,12 @@ distinguishes primary limits from secondary limits when response headers or
 the GitHub error message allow it. It respects reset/Retry-After instructions;
 when the requested wait exceeds the configurable maximum (30 seconds by
 default), it returns a structured `rate_limit` error and retry delay. Network,
-timeout, and 5xx failures use at most two retries by default, bounded jittered
-backoff, a 15-second request timeout, and a 45-second total elapsed limit.
-401, 404, 422, malformed JSON, unexpected content types, cancellation, and
+timeout, and 5xx failures, including transient response-body read failures, use
+at most two retries by default with bounded jittered backoff. The 15-second
+request timeout and 45-second total elapsed limit cover response-body reads.
+JSON response bodies are limited to 2 MiB and error bodies to 32 KiB; oversized
+responses fail with a structured `response_too_large` error. 401, 404, 422,
+malformed JSON, unexpected content types, cancellation, and
 pagination violations have distinct error kinds. A 404 means unavailable to
 this request; it cannot confirm deletion or distinguish private access.
 

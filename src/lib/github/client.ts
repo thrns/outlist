@@ -61,6 +61,10 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_MAX_ELAPSED_MS = 45_000;
 const DEFAULT_MAX_RATE_LIMIT_WAIT_MS = 30_000;
+// GitHub's largest expected JSON page (100 releases) is well below this cap.
+// Keep diagnostics smaller because error responses are never needed in full.
+const MAX_SUCCESS_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_ERROR_BODY_BYTES = 32 * 1024;
 
 const clientOptionsSchema = z.object({
   timeoutMs: z.number().int().positive().max(120_000).default(DEFAULT_TIMEOUT_MS),
@@ -75,6 +79,7 @@ type InternalRequestResult<T> = {
 };
 
 type RepositoryIdentity = { id: number; owner: string; repo: string };
+type BufferedResponse = { response: Response; body: Uint8Array };
 
 export class GitHubClient {
   readonly #token: string | undefined;
@@ -409,7 +414,7 @@ export class GitHubClient {
     onNotFound?: () => TData,
     notModifiedIdentity?: string,
   ): Promise<InternalRequestResult<TData>> {
-    const response = await this.#fetchResponse(url, options);
+    const { response, body } = await this.#fetchResponse(url, options);
     const rateLimit = parseRateLimitHeaders(response.headers, this.#now());
     const fetchedAt = new Date(this.#now()).toISOString();
     const sourceApiUrl = url.href;
@@ -448,7 +453,7 @@ export class GitHubClient {
       return { result: { kind: "ok", data, provenance }, linkHeader: response.headers.get("link") ?? undefined };
     }
 
-    if (!response.ok) throw await this.#responseError(response, rateLimit);
+    if (!response.ok) throw await this.#responseError(response, body, rateLimit);
     const contentType = response.headers.get("content-type") ?? "";
     if (!isJsonContentType(contentType)) {
       throw new GitHubApiError("unexpected_content_type", "GitHub returned a non-JSON response for a JSON endpoint.", {
@@ -459,7 +464,7 @@ export class GitHubClient {
 
     let json: unknown;
     try {
-      json = JSON.parse(await response.text());
+      json = JSON.parse(new TextDecoder().decode(body));
     } catch {
       throw new GitHubApiError("malformed_payload", "GitHub returned malformed JSON.", {
         status: response.status,
@@ -496,7 +501,7 @@ export class GitHubClient {
     };
   }
 
-  async #fetchResponse(url: URL, options: GitHubRequestOptions): Promise<Response> {
+  async #fetchResponse(url: URL, options: GitHubRequestOptions): Promise<BufferedResponse> {
     const startedAt = this.#now();
     let attempt = 0;
     while (true) {
@@ -507,22 +512,32 @@ export class GitHubClient {
       });
       if (this.#token) headers.set("Authorization", `Bearer ${this.#token}`);
       if (options.etag) headers.set("If-None-Match", options.etag);
-      let response: Response;
+      const remainingMs = this.#maxElapsedTimeMs - (this.#now() - startedAt);
+      if (remainingMs <= 0) {
+        throw new GitHubApiError("timeout", "The GitHub request exceeded the configured elapsed-time limit.", {
+          retryable: true,
+        });
+      }
+      const attemptStartedAt = this.#now();
+      const timeoutMs = Math.min(this.#timeoutMs, remainingMs);
+      let buffered: BufferedResponse;
       try {
-        const remainingMs = this.#maxElapsedTimeMs - (this.#now() - startedAt);
-        if (remainingMs <= 0) {
+        buffered = await this.#fetchWithTimeout(
+          url,
+          headers,
+          options.signal,
+          timeoutMs,
+        );
+        if (this.#now() - attemptStartedAt >= timeoutMs) {
+          throw new GitHubApiError("timeout", `The GitHub request timed out after ${timeoutMs} ms.`, { retryable: true });
+        }
+      } catch (error) {
+        if (error instanceof GitHubApiError && error.kind === "aborted") throw error;
+        if (this.#now() - startedAt >= this.#maxElapsedTimeMs) {
           throw new GitHubApiError("timeout", "The GitHub request exceeded the configured elapsed-time limit.", {
             retryable: true,
           });
         }
-        response = await this.#fetchWithTimeout(
-          url,
-          headers,
-          options.signal,
-          Math.min(this.#timeoutMs, remainingMs),
-        );
-      } catch (error) {
-        if (error instanceof GitHubApiError && error.kind === "aborted") throw error;
         const timeout = error instanceof GitHubApiError && error.kind === "timeout";
         const retryable = timeout || (error instanceof GitHubApiError && error.kind === "network");
         if (!retryable || attempt >= this.#maxRetries) {
@@ -534,16 +549,17 @@ export class GitHubClient {
         continue;
       }
 
+      const { response, body } = buffered;
       const rateLimit = parseRateLimitHeaders(response.headers, this.#now());
       if (response.status === 408 || response.status >= 500) {
-        if (attempt >= this.#maxRetries) throw await this.#responseError(response, rateLimit);
+        if (attempt >= this.#maxRetries) throw await this.#responseError(response, body, rateLimit);
         const delay = this.#backoff(attempt++);
         await this.#wait(delay, options.signal, startedAt, "server");
         continue;
       }
 
       if (response.status === 403 || response.status === 429) {
-        const diagnostic = await safeErrorMessage(response, this.#token);
+        const diagnostic = safeErrorMessage(body, this.#token);
         const rateLimitKind = classifyRateLimitResponse(response.status, rateLimit, diagnostic);
         if (rateLimitKind) {
           const waitMs = requiredRateLimitWaitMs(rateLimit, rateLimitKind, this.#now());
@@ -562,11 +578,11 @@ export class GitHubClient {
           continue;
         }
       }
-      return response;
+      return buffered;
     }
   }
 
-  async #fetchWithTimeout(url: URL, headers: Headers, signal: AbortSignal | undefined, timeoutMs: number): Promise<Response> {
+  async #fetchWithTimeout(url: URL, headers: Headers, signal: AbortSignal | undefined, timeoutMs: number): Promise<BufferedResponse> {
     if (signal?.aborted) throw new GitHubApiError("aborted", "The GitHub request was cancelled.");
     const controller = new AbortController();
     let timedOut = false;
@@ -576,22 +592,36 @@ export class GitHubClient {
       timedOut = true;
       controller.abort(new DOMException("Request timed out", "TimeoutError"));
     }, timeoutMs);
+    let response: Response | undefined;
     try {
-      return await this.#fetch(url, { method: "GET", headers, signal: controller.signal });
-    } catch {
+      response = await this.#fetch(url, { method: "GET", headers, signal: controller.signal });
+      if (timedOut || signal?.aborted) throw new Error("Request cancelled while receiving response headers.");
+      const limit = response.ok ? MAX_SUCCESS_BODY_BYTES : MAX_ERROR_BODY_BYTES;
+      const body = response.status === 304
+        ? new Uint8Array()
+        : await readLimitedBody(response, limit, controller.signal);
+      if (timedOut || signal?.aborted) throw new Error("Request cancelled while reading the response body.");
+      return { response, body };
+    } catch (error) {
       if (signal?.aborted) throw new GitHubApiError("aborted", "The GitHub request was cancelled.");
       if (timedOut) {
         throw new GitHubApiError("timeout", `The GitHub request timed out after ${timeoutMs} ms.`, { retryable: true });
       }
-      throw new GitHubApiError("network", "The GitHub request failed before receiving a response.", { retryable: true });
+      if (error instanceof GitHubApiError) throw error;
+      throw new GitHubApiError(
+        "network",
+        response ? "The GitHub response body could not be read." : "The GitHub request failed before receiving a response.",
+        { retryable: true },
+      );
     } finally {
+      if (controller.signal.aborted && response?.body) cancelResponseBody(response, controller.signal.reason);
       clearTimeout(timer);
       signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 
-  async #responseError(response: Response, rateLimit?: GitHubRateLimit): Promise<GitHubApiError> {
-    const diagnostic = await safeErrorMessage(response, this.#token);
+  async #responseError(response: Response, body: Uint8Array, rateLimit?: GitHubRateLimit): Promise<GitHubApiError> {
+    const diagnostic = safeErrorMessage(body, this.#token);
     const rateLimitKind = classifyRateLimitResponse(response.status, rateLimit, diagnostic);
     const retryAfterMs = rateLimitKind
       ? requiredRateLimitWaitMs(rateLimit, rateLimitKind, this.#now())
@@ -724,10 +754,10 @@ function isJsonContentType(value: string): boolean {
   return /^application\/(?:[a-z0-9.+-]*\+)?json(?:\s*;|$)/i.test(value.trim());
 }
 
-async function safeErrorMessage(response: Response, token?: string): Promise<string> {
+function safeErrorMessage(body: Uint8Array, token?: string): string {
   try {
-    const text = await response.clone().text();
-    if (!text || text.length > 32_768) return "";
+    if (!body.byteLength || body.byteLength > MAX_ERROR_BODY_BYTES) return "";
+    const text = new TextDecoder().decode(body);
     const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || !("message" in parsed)) return "";
     const message = (parsed as { message?: unknown }).message;
@@ -735,6 +765,100 @@ async function safeErrorMessage(response: Response, token?: string): Promise<str
   } catch {
     return "";
   }
+}
+
+async function readLimitedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    cancelResponseBody(response, "Response body exceeded configured byte limit.");
+    throw responseTooLarge(response, maxBytes);
+  }
+  if (!response.body) return new Uint8Array();
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await readWithAbort(reader, signal);
+      if (done) break;
+      if (!value) continue;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        cancelReader(reader, "Response body exceeded configured byte limit.");
+        throw responseTooLarge(response, maxBytes);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    cancelReader(reader, error);
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The stream can still be settling after cancellation; the abort path
+      // already requested cancellation and the lock will be released by it.
+    }
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function readWithAbort(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) {
+    cancelReader(reader, signal.reason);
+    return Promise.reject(signal.reason ?? new Error("Response body read was aborted."));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      cancelReader(reader, signal.reason);
+      finish(() => reject(signal.reason ?? new Error("Response body read was aborted.")));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    reader.read().then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>, reason?: unknown): void {
+  try {
+    void reader.cancel(reason).catch(() => {});
+  } catch {
+    // Cancellation is best effort for streams that have already errored.
+  }
+}
+
+function cancelResponseBody(response: Response, reason?: unknown): void {
+  try {
+    void response.body?.cancel(reason).catch(() => {});
+  } catch {
+    // The body may already be locked or consumed.
+  }
+}
+
+function responseTooLarge(response: Response, maxBytes: number): GitHubApiError {
+  return new GitHubApiError("response_too_large", `GitHub returned a response larger than the ${maxBytes}-byte limit.`, {
+    status: response.status,
+  });
 }
 
 function safeRequestId(value: string | null): string | undefined {
