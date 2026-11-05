@@ -1,78 +1,102 @@
-# Outlist — Next.js directory prototype
+# Outlist
 
-A complete React reconstruction of the supplied standalone Outlist HTML prototype. Uses **Next.js App Router**, **React 19**, **TypeScript**, **Tailwind CSS v4**, and locally-owned **shadcn/ui-style components** (Radix-powered dialog and checkbox, plus button, badge, input, textarea, and native-select components).
+Outlist is an open-source discovery directory built as a Next.js 16 modular
+monolith. The current app is a local demo with a curated sample catalog. Bun is
+the package manager and runtime; Supabase clients and the local CLI workflow
+provide the foundation for later milestones.
+
+## Requirements
+
+- Bun **1.3.14** (pinned by `.bun-version` and `package.json`)
+- A supported operating system for Next.js
+- Docker-compatible container runtime only when starting the local Supabase stack
 
 ## Quick start
 
-Requires Node.js **20.9+** (Node.js 22 LTS recommended).
-
 ```bash
-npm install
-npm run dev
+bun install --frozen-lockfile
+bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). No API keys, environment variables, database, or external services are required.
+Open [http://localhost:3000](http://localhost:3000). The demo runs without
+Supabase credentials. Supabase clients validate their required configuration
+only when called, so an unconfigured project can still build and render the
+existing routes.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start Next.js development server |
-| `npm run build` | Create optimized production build |
-| `npm start` | Run the production build |
-| `npm run typecheck` | Strict TypeScript check |
-| `npm run lint` | ESLint with Next.js core-web-vitals + TypeScript rules |
-| `npm run check` | Run typecheck, lint, and build |
-| `npm run validate:data` | Verify extracted seed data and referential integrity |
+| `bun run dev` | Start the Next.js development server using Bun |
+| `bun run build` | Create the production build using Bun |
+| `bun run start` | Run the production server using Bun |
+| `bun run typecheck` | Run the strict TypeScript check |
+| `bun run lint` | Run ESLint with the Next.js rules |
+| `bun run test` | Run Vitest tests |
+| `bun run validate:data` | Check sample-data integrity |
+| `bun run check` | Run typecheck, lint, tests, data validation, and build |
+| `bun run supabase <command>` | Run the project-pinned Supabase CLI |
 
-## Routes
+`bun.lock` is the committed dependency lockfile. Do not commit other package
+manager lockfiles.
+
+## Existing demo
 
 - `/` — Home, hero search, featured projects, trending/recent, categories
 - `/explore` — Search, category/license/language filters, sorting, pagination
-- `/categories` — Category directory
-- `/category/[id]` — Category-specific filtered directory
-- `/project/[id]` — Project details, repository metadata, related projects
-- `/alternatives` — Browse and filter proprietary software alternatives
-- `/submit` — Form validation and browser-local submission queue
-- `/admin` — Approve/reject submissions, feature/unlist listings, mock sync log
+- `/categories` and `/category/[id]` — Category directory and filtered listings
+- `/project/[id]` — Project details and related projects
+- `/alternatives` — Browse proprietary-software alternatives
+- `/submit` — Browser-local submission queue
+- `/admin` — Browser-local review queue and mock sync controls
 
-## Features
+The existing component-based UI, design, CSS, and all 33 sample projects remain
+in place. Demo repository metrics are illustrative. Directory edits are stored
+in browser `localStorage`; they are not shared across users or devices. The
+admin and ingestion controls are demonstrations and are not connected to a
+database or external repository service.
 
-- Responsive design faithfully transcribed from the original HTML's CSS and visual tokens.
-- Real Next.js URLs and navigation, React components, accessible form labels and dialog behavior.
-- Ctrl/⌘ + K opens global search; Escape closes it; Enter opens the first result.
-- Light/dark mode, mobile navigation, mobile filter drawer, searchable/sortable/paginated listing.
-- Seed data contains **33 sample projects and 8 categories** from the supplied prototype.
-- State is saved under `outlist-directory-v1` in **localStorage** and survives refresh. Approved submissions immediately appear in public directory. Rejected submissions leave the review queue. Featured and visibility changes also persist.
-- All sample counts, project activity and repository metadata are **illustrative**. Links point to the project's public GitHub repository and official website as in the source prototype.
-- No account system, hosted repository management, automated GitHub ingestion, actual content moderation, or server-side persistence. The sync action is deliberately labeled **mock sync**. This is an explicitly browser-local prototype, not a hosted multi-user directory. To add those later, replace the local `DirectoryProvider` with a database + authenticated API.
+## Supabase local development
 
-## Architecture
+The CLI is a locked project dependency. Starting the local stack requires a
+Docker-compatible runtime and downloads the Supabase service images the first
+time. No hosted project or production credentials are needed.
 
-```
-src/
-  app/                 Next.js App Router pages, layout, metadata and loading/error UI
-  components/
-    ui/                Owned shadcn/ui-style primitives (Radix where needed)
-    layout/            Header, footer, command palette, breadcrumbs, headings
-    project/           Project cards, logo, details and Lucide icons
-    directory/         Directory, filters, category index, alternatives, submission, admin
-    home/              Homepage sections
-  context/             Typed directory state and localStorage persistence
-  data/                Typed model/helpers and seed JSON extracted from original HTML
-  lib/                 UI class-name utility
+```bash
+bun run supabase start
+bun run supabase status
+bun run supabase stop
 ```
 
-## Design fidelity and data
+The local stack configuration is in `supabase/config.toml`. Versioned SQL
+migrations belong in `supabase/migrations/`; M0-01 intentionally adds no schema.
+Use `bun run supabase migration new <name>` to create a migration in a later
+schema milestone. Do not link a hosted project or use a remote migration
+command as part of local setup.
 
-`src/app/globals.css` retains the source HTML's main CSS and breakpoints, with minimal React-specific adjustments. The original sample data and most original copy are retained, including the representative activity chart. The original HTML is **not embedded or executed** anywhere in the application.
+When configuring the app to use local Supabase, copy `.env.example` to
+`.env.local` and fill it with values printed by `bun run supabase status`.
+Never put a secret key in a `NEXT_PUBLIC_` variable.
 
-The source prototype contained an alternative-project reference (`outline`) without a corresponding project record. This reconstruction omits that nonexistent entry instead of rendering a broken link. It also corrects the original category-filter counting and enforces duplicate-repository validation on submissions.
+## Architecture and plans
 
-## Environment
+- [Architecture](ARCHITECTURE.md) describes the current app and intended system boundaries.
+- [Data pipeline](DATA_PIPELINE.md) distinguishes the current static data from planned ingestion.
+- [Roadmap](ROADMAP.md) lists the milestone sequence.
 
-`.env.example` is included for clarity; **no environment variables are necessary**. Inter font files are delivered via the `@fontsource/inter` npm package and bundled locally by Next.js rather than relying on a third-party font CDN.
+The planned system uses Supabase SQL migrations as the database schema source
+of truth. Generated TypeScript database types will be added after the schema is
+created. PostgreSQL search, Storage, server-side access controls, and scheduled
+ingestion are planned; none is claimed to be operational yet.
 
-## Verification note
+## Environment variables
 
-This project was generated in a sandbox where outbound access to `registry.npmjs.org` was unavailable (`EAI_AGAIN`). Consequently, npm dependency installation, a full Next.js build and runtime browser testing could **not** be completed in that sandbox. The source was instead checked with locally available static tooling. Run `npm install && npm run check` in a normal network-enabled environment to confirm the full toolchain. This limitation is disclosed rather than claiming an unverified successful production build.
+`.env.example` contains placeholders only:
+
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — publishable client key
+- `SUPABASE_SECRET_KEY` — privileged server-only key
+
+The browser and cookie-aware server clients use only public credentials. The
+privileged client is marked server-only and disables session persistence. No
+Supabase credentials are required by CI.

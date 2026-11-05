@@ -1,0 +1,8 @@
+project_id = "outlist"
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
