@@ -35,8 +35,6 @@ const supabaseAdmin: SupabaseClient = createClient(apiUrl, secretKey, {
   },
 });
 
-test.describe.configure({ mode: "serial" });
-
 async function requestCode(page: Page, email: string) {
   await page.goto("/admin/login");
   await page.getByLabel("Email address").fill(email);
@@ -109,6 +107,12 @@ async function expectNoStore(
   expect(cacheControl).toContain("private");
   expect(cacheControl).toContain("no-store");
 }
+
+test("the public administrator login route renders its actual sign-in page", async ({ page }) => {
+  const response = await page.goto("/admin/login");
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Administrator sign in" })).toBeVisible();
+});
 
 test("anonymous access redirects and keeps protected content absent", async ({ page }) => {
   const response = await page.goto("/admin");

@@ -204,6 +204,15 @@ function printRelevantLogLines(label, input) {
   if (excerpts.length > 0) {
     console.error(`${label} diagnostic excerpts (credentials and test identities redacted):`);
     console.error(excerpts.join("\n"));
+  } else {
+    const tail = redactDiagnostics(input)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-40);
+    if (tail.length > 0) {
+      console.error(`${label} recent server log tail (credentials and test identities redacted):`);
+      console.error(tail.join("\n"));
+    }
   }
 }
 
