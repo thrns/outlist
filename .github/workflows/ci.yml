@@ -23,3 +23,43 @@ jobs:
       - run: bun run test
       - run: bun run validate:data
       - run: bun run build
+
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Confirm the project-pinned Supabase CLI
+        run: ./node_modules/.bin/supabase --version
+      - name: Start local Supabase services
+        run: bun run supabase start
+      - name: Apply migrations to a clean local database
+        run: bun run supabase db reset
+      - name: Rebuild the schema a second time from migrations
+        run: bun run supabase db reset
+      - name: Verify category seed repeatability
+        run: |
+          bun run supabase db query --file supabase/migrations/20261104100500_seed_category_taxonomy.sql
+          bun run supabase db query --file supabase/migrations/20261104100500_seed_category_taxonomy.sql
+          bun run supabase db query --file supabase/ci/assert_category_taxonomy.sql
+      - name: Run database tests
+        run: bun run supabase test db
+      - name: Lint database functions
+        run: bun run supabase db lint --schema public,private --fail-on error
+      - name: Generate database types from the migrated local database
+        run: ./node_modules/.bin/supabase gen types --lang=typescript > "$RUNNER_TEMP/database.types.ts"
+      - name: Check committed database types
+        run: diff -u src/lib/supabase/database.types.ts "$RUNNER_TEMP/database.types.ts"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: outlist-database-types
+          path: ${{ runner.temp }}/database.types.ts
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Stop local Supabase services and remove volumes
+        if: always()
+        run: bun run supabase stop --no-backup

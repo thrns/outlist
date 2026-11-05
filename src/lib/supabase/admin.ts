@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 import { validateSupabaseAdminEnv } from "@/lib/env";
+import type { Database } from "@/lib/supabase/database.types";
 
 export function createSupabaseAdminClient() {
   const { url, secretKey } = validateSupabaseAdminEnv({
@@ -9,7 +10,7 @@ export function createSupabaseAdminClient() {
     secretKey: process.env.SUPABASE_SECRET_KEY,
   });
 
-  return createClient(url, secretKey, {
+  return createClient<Database>(url, secretKey, {
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,

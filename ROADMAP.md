@@ -12,10 +12,26 @@ This roadmap separates the current demo from planned platform capabilities.
 
 ## M0-02 — Database schema
 
-- Define the production catalog and ingestion schema in versioned SQL migrations.
-- Add indexes and row-level security policies appropriate to the data model.
-- Generate and commit TypeScript database types from the local schema.
-- No schema is included in M0-01.
+- Define the normalized catalog, repository metadata, provenance, operations,
+  moderation, and administration tables in versioned SQL migrations.
+- Seed 11 database-driven categories while leaving the 33 illustrative JSON
+  projects outside production data.
+- Add integrity constraints, publication guards, search and workload indexes,
+  RLS policies, least-privilege grants, and the restricted project-logo bucket.
+- Generate TypeScript database types from the migrated schema and check for
+  drift in database CI.
+- Keep the demo's routes and JSON behavior unchanged. The schema is ready for
+  later ingestion and server integration, but neither is implemented here.
+
+### Remaining limitations after M0-02
+
+- Local database execution depends on a working Docker-compatible runtime;
+  GitHub Actions provides the independent migration, pgTAP, lint, and type
+  generation environment.
+- M0-03 still needs administrator authentication and authorization.
+- Repository ingestion, validated submission endpoints, project publication
+  tools, public database queries, search RPC, and UI integration remain later
+  work.
 
 ## Later milestones
 
@@ -27,6 +43,7 @@ This roadmap separates the current demo from planned platform capabilities.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-These are plans only. Hosted Supabase services, a database-backed catalog,
-repository ingestion, production search, and administrator authentication are
-not operational in the current demo.
+These are plans only. The local schema and policies exist, but hosted Supabase
+deployment, a database-backed catalog, repository ingestion, production
+search, and administrator authentication are not operational in the current
+demo.

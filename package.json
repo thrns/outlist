@@ -12,7 +12,10 @@
     "test": "bun --bun vitest run",
     "validate:data": "bun scripts/validate-data.mjs",
     "check": "bun run typecheck && bun run lint && bun run test && bun run validate:data && bun run build",
-    "supabase": "bunx supabase"
+    "supabase": "bunx supabase",
+    "supabase:db-test": "bun run supabase test db",
+    "supabase:db-lint": "bun run supabase db lint --schema public,private --fail-on error",
+    "supabase:types": "SUPABASE_TELEMETRY_DISABLED=1 bun run supabase gen types --lang=typescript > src/lib/supabase/database.types.ts"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.0",

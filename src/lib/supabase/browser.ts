@@ -2,6 +2,7 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import { validateSupabasePublicEnv } from "@/lib/env";
+import type { Database } from "@/lib/supabase/database.types";
 
 export function createSupabaseBrowserClient() {
   const { url, publishableKey } = validateSupabasePublicEnv({
@@ -9,5 +10,5 @@ export function createSupabaseBrowserClient() {
     publishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   });
 
-  return createBrowserClient(url, publishableKey);
+  return createBrowserClient<Database>(url, publishableKey);
 }

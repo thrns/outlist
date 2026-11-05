@@ -36,6 +36,9 @@ existing routes.
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
+| `bun run supabase:db-test` | Run the database pgTAP suite against local Supabase |
+| `bun run supabase:db-lint` | Lint local database functions and schema |
+| `bun run supabase:types` | Generate TypeScript types from the local database |
 
 `bun.lock` is the committed dependency lockfile. Do not commit other package
 manager lockfiles.
@@ -68,11 +71,35 @@ bun run supabase status
 bun run supabase stop
 ```
 
-The local stack configuration is in `supabase/config.toml`. Versioned SQL
-migrations belong in `supabase/migrations/`; M0-01 intentionally adds no schema.
-Use `bun run supabase migration new <name>` to create a migration in a later
-schema milestone. Do not link a hosted project or use a remote migration
-command as part of local setup.
+The local stack configuration is in `supabase/config.toml`. SQL migrations in
+`supabase/migrations/` are the single source of truth for the production
+schema. Use `bun run supabase migration new <name>` to create a migration, then
+apply and verify it locally:
+
+```bash
+bun run supabase db reset
+bun run supabase:db-test
+bun run supabase:db-lint
+bun run supabase:types
+```
+
+`db reset` destroys and recreates the local database from migrations. Do not
+link a hosted project or use a remote migration command for local setup.
+
+The schema contains normalized projects, provider repositories, categories,
+tags, source provenance, releases, daily repository snapshots, languages,
+topics, project logos and alternatives, discovery queries, candidates, job
+history, submissions, moderation, editorial overrides, and an administrator
+allowlist. It seeds 11 categories and no sample projects. RLS and explicit
+grants expose only published catalog information to anonymous and ordinary
+authenticated users. Those roles cannot write projects, submissions, or logo
+objects. Admin authentication and submission endpoints come later.
+
+The `project-logos` bucket is public for approved assets, limited to 2 MiB and
+PNG/JPEG/WebP. Public bucket downloads bypass Storage object read policies, so
+only approved and validated files should ever be uploaded. SVG handling is
+excluded. Logo URLs, verification, and safe attribution live in
+`project_logos`; the current UI letter fallback remains unchanged.
 
 When configuring the app to use local Supabase, copy `.env.example` to
 `.env.local` and fill it with values printed by `bun run supabase status`.
@@ -84,10 +111,13 @@ Never put a secret key in a `NEXT_PUBLIC_` variable.
 - [Data pipeline](DATA_PIPELINE.md) distinguishes the current static data from planned ingestion.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
-The planned system uses Supabase SQL migrations as the database schema source
-of truth. Generated TypeScript database types will be added after the schema is
-created. PostgreSQL search, Storage, server-side access controls, and scheduled
-ingestion are planned; none is claimed to be operational yet.
+The demo's existing routes and localStorage behavior remain unchanged and do
+not query the database. The schema, RLS, taxonomy, logo bucket, and generated
+types are implemented; the search RPC, server-side catalog integration,
+submission endpoint, project publication tools, ingestion worker, and
+administrator authentication are later milestones. GitHub Actions runs a
+clean local Supabase stack, migration reset, pgTAP tests, database lint, and
+type drift check without hosted credentials.
 
 ## Environment variables
 
