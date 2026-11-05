@@ -92,8 +92,13 @@ This roadmap separates the current demo from planned platform capabilities.
   rediscovery retains rejected or discarded review states.
 - Added atomic partition claims with leases and fencing tokens, bounded retries,
   and recovery after worker interruption.
-- Added an explicit bounded Bun CLI, unit/pgTAP coverage, disposable Supabase
-  concurrency tests in CI, and operations documentation.
+- Made exact plan registration preserve leases and checkpoints. An incompatible
+  query definition in the same plan version fails atomically; an intentional
+  change requires a new plan version or explicit reset migration. Candidate
+  execution budgets no longer change the persisted search page size.
+- Added an explicit bounded Bun CLI with safe Supabase configuration and
+  connection errors, plus unit/pgTAP coverage and real disposable Supabase
+  integration of the CLI orchestration using deterministic GitHub HTTP fixtures.
 - Kept candidates separate from canonical projects and repositories. This
   milestone does not normalize, verify licenses, classify, fetch logos, or
   publish listings.
@@ -105,9 +110,11 @@ This roadmap separates the current demo from planned platform capabilities.
   indexing/scope limits, a 1,000-result window, and possible incomplete
   results; the plan does not claim exhaustive GitHub coverage.
 - The worker is manually invoked and serial. It is not scheduled and does not
-  enrich or publish candidates. No live collection is run by ordinary CI.
+  enrich or publish candidates. Deterministic GitHub HTTP fixtures do not
+  constitute a live GitHub crawl or hosted Supabase verification.
 - Local PostgreSQL integration depends on a running Docker-compatible runtime;
-  GitHub Actions exercises the queue against disposable local Supabase.
+  GitHub Actions exercises the queue and actual worker orchestration against
+  disposable local Supabase.
 
 ## Later milestones
 

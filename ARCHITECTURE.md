@@ -52,16 +52,24 @@ The M1-02 Bun worker is a separate CLI process, not a web endpoint. It accepts
 only the ten topic and language partitions in the versioned `initial` plan,
 uses conservative serial claims, and persists candidates and page provenance
 through narrow service-role SQL functions. `discovery_queries` holds the query
-fingerprint,
-cursor, retry time, lease, and fencing token. Each page commit updates source
-provenance, candidates, counts, and the checkpoint in one PostgreSQL
+fingerprint, cursor, retry time, lease, and fencing token. Exact plan
+re-registration leaves the partition row unchanged. An incompatible definition
+cannot reset an active lease or alter a same-version checkpoint; an intentional
+definition change requires a new plan version or an explicit reset migration.
+The candidate limit is an execution budget and does not alter the persisted
+query page size. If a whole fetched page exceeds the remaining budget, the
+worker releases it without advancing the cursor. Each page commit updates
+source provenance, candidates, counts, and the checkpoint in one PostgreSQL
 transaction. The 2020–2026 topic and language sample is intentionally bounded
 and is not an exhaustive GitHub crawl. Search results above the 1,000-result
-window or marked incomplete are split by adjacent creation-date ranges when possible; otherwise
-they are left for review. Candidate rows remain separate from canonical
-projects and repositories. Later milestones will consume them. PostgreSQL
-owns normalized catalog data and the indexed search document; M2-01 will add
-the public search RPC. Storage remains limited to approved logo assets.
+window or marked incomplete are split by adjacent creation-date ranges when
+possible; otherwise they are left for review. Candidate rows remain separate
+from canonical projects and repositories. The CI worker integration runs the
+actual CLI orchestration against disposable local Supabase with deterministic
+GitHub HTTP fixtures; it does not verify a live GitHub crawl or hosted Supabase.
+Later milestones will consume candidates. PostgreSQL owns normalized catalog
+data and the indexed search document; M2-01 will add the public search RPC.
+Storage remains limited to approved logo assets.
 
 The GitHub client reads optional `GITHUB_TOKEN` configuration at construction
 time, sends it only as `Authorization: Bearer`, and uses GitHub REST API

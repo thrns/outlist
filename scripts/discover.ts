@@ -1,13 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdminClient } from "../src/lib/supabase/admin";
-import { createGitHubClient } from "../src/lib/github/client";
+import { createGitHubClient, type GitHubClient } from "../src/lib/github/client";
 import { GitHubApiError } from "../src/lib/github/errors";
 import type { GitHubSearchRepository } from "../src/lib/github/types";
 import {
   getDiscoveryPlan,
   INITIAL_PLAN_VERSION,
-  SEARCH_PAGE_SIZE,
-  calculatePartitionFingerprint,
   needsPartitionSplit,
   splitSaturatedPartition,
   type DiscoveryPartition,
@@ -31,8 +29,25 @@ export interface DiscoveryArguments {
 }
 
 type RpcClient = {
-  rpc(name: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>;
+  rpc(name: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string; code?: string; status?: number } | null }>;
 };
+
+type DiscoveryDatabase = RpcClient & Pick<ReturnType<typeof createSupabaseAdminClient>, "from">;
+
+export interface DiscoveryCliDependencies {
+  /** In-process integration seam; the production CLI has no configurable GitHub host. */
+  supabase?: DiscoveryDatabase;
+  github?: Pick<GitHubClient, "searchRepositories">;
+  writeStdout?: (text: string) => void;
+  writeStderr?: (text: string) => void;
+}
+
+class DiscoveryOperationalError extends Error {
+  constructor(readonly stage: string, message: string) {
+    super(message);
+    this.name = "DiscoveryOperationalError";
+  }
+}
 
 type ClaimedPartition = {
   id: string;
@@ -152,22 +167,24 @@ export function formatSafeGitHubFailure(error: unknown): {
   return { summary: "unexpected GitHub search failure", kind: "unexpected", retryable: true, retryAfterMs: null };
 }
 
-export async function runDiscoveryCli(args: string[]): Promise<number> {
+export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCliDependencies = {}): Promise<number> {
+  const stdout = dependencies.writeStdout ?? ((text: string) => process.stdout.write(text));
+  const stderr = dependencies.writeStderr ?? ((text: string) => process.stderr.write(text));
   let parsed: DiscoveryArguments;
   try {
     parsed = parseDiscoveryArguments(args);
   } catch {
-    process.stderr.write(`${JSON.stringify({ event: "failure", stage: "arguments", message: "Invalid discovery arguments." })}\n${USAGE}\n`);
+    stderr(`${JSON.stringify({ event: "failure", stage: "arguments", message: "Invalid discovery arguments." })}\n${USAGE}\n`);
     return 2;
   }
   if (parsed.help) {
-    process.stdout.write(`${USAGE}\n`);
+    stdout(`${USAGE}\n`);
     return 0;
   }
 
-  const partitions = applyCandidatePageLimit(getDiscoveryPlan(parsed.plan), parsed.maxCandidates);
+  const partitions = getDiscoveryPlan(parsed.plan);
   if (parsed.mode === "dry-run") {
-    process.stdout.write(`${JSON.stringify({
+    stdout(`${JSON.stringify({
       event: "discovery_plan",
       mode: "dry-run",
       plan: parsed.plan,
@@ -187,8 +204,6 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
     return 0;
   }
 
-  const supabase = createSupabaseAdminClient() as unknown as RpcClient & ReturnType<typeof createSupabaseAdminClient>;
-  const github = createGitHubClient();
   const workerId = `discover-${process.pid}-${randomUUID()}`;
   const controller = new AbortController();
   const onInterrupt = () => controller.abort();
@@ -196,6 +211,9 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
   process.once("SIGTERM", onInterrupt);
 
   let jobId: string | undefined;
+  let supabase: DiscoveryDatabase | undefined;
+  let github: Pick<GitHubClient, "searchRepositories"> | undefined;
+  let stage = "database_configuration";
   let queriesClaimed = 0;
   let pagesCommitted = 0;
   let candidatesSeen = 0;
@@ -204,24 +222,39 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
   let needsReview = 0;
   let interrupted = false;
   let stopAfterGitHubBlock = false;
+  const invoke = async (name: string, rpcArgs: Record<string, unknown>) => {
+    try {
+      const result = await supabase!.rpc(name, rpcArgs);
+      if (result.error) throw databaseFailure(stage, result.error);
+      return result;
+    } catch (error) {
+      if (error instanceof DiscoveryOperationalError) throw error;
+      throw databaseFailure(stage, error);
+    }
+  };
+
   try {
-    const registered = await supabase.rpc("start_discovery_job", {
+    supabase = dependencies.supabase ?? createSupabaseAdminClient() as unknown as DiscoveryDatabase;
+    stage = "github_configuration";
+    github = dependencies.github ?? createGitHubClient();
+    stage = "plan_registration";
+    const registered = await invoke("start_discovery_job", {
       p_plan_name: parsed.plan,
       p_plan_version: INITIAL_PLAN_VERSION,
       p_partitions: partitions.map(toDatabasePartition),
     });
-    if (registered.error || typeof registered.data !== "string") throw new Error("Supabase could not register the discovery plan.");
+    if (typeof registered.data !== "string") throw databaseFailure(stage, new Error("invalid response"));
     jobId = registered.data;
-    process.stdout.write(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume, plan: parsed.plan })}\n`);
+    stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume, plan: parsed.plan })}\n`);
 
     while (!controller.signal.aborted && queriesClaimed < parsed.maxQueries && pagesCommitted < parsed.maxPages && candidatesSeen < parsed.maxCandidates) {
-      const claimResult = await supabase.rpc("claim_discovery_partitions", {
+      stage = "partition_claim";
+      const claimResult = await invoke("claim_discovery_partitions", {
         p_job_id: jobId,
         p_worker_id: workerId,
         p_limit: 1,
         p_lease_seconds: 180,
       });
-      if (claimResult.error) throw new Error("Supabase could not claim a discovery partition.");
       const claimed = Array.isArray(claimResult.data) ? claimResult.data as ClaimedPartition[] : [];
       const partition = claimed[0];
       if (!partition) break;
@@ -234,7 +267,8 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
       while (!controller.signal.aborted && pagesCommitted < parsed.maxPages && candidatesSeen < parsed.maxCandidates) {
         let searchResult;
         try {
-          searchResult = await github.searchRepositories(partition.query_text, {
+          stage = "github_search";
+          searchResult = await github!.searchRepositories(partition.query_text, {
             page,
             perPage: pageSize,
             sort: partition.query_parameters.sort,
@@ -244,7 +278,8 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
         } catch (error) {
           const failure = formatSafeGitHubFailure(error);
           if (failure.kind === "aborted" || controller.signal.aborted) {
-            await supabase.rpc("release_discovery_partition", {
+            stage = "lease_release";
+            await invoke("release_discovery_partition", {
               p_query_id: partition.id,
               p_worker_id: workerId,
               p_lease_token: partition.lease_token,
@@ -253,7 +288,8 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
             interrupted = true;
             break;
           }
-          const failed = await supabase.rpc("fail_discovery_partition", {
+          stage = "persist_github_failure";
+          const failed = await invoke("fail_discovery_partition", {
             p_query_id: partition.id,
             p_worker_id: workerId,
             p_lease_token: partition.lease_token,
@@ -261,13 +297,12 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
             p_retryable: failure.retryable,
             p_retry_after_ms: failure.retryAfterMs,
           });
-          if (failed.error) throw new Error("Supabase could not persist the GitHub retry state.");
           const status = readJsonField(failed.data, "status");
           if (status === "retry_wait") retriesScheduled += 1;
           else failures += 1;
           partitionSettled = true;
           if (["rate_limit", "unauthorized", "forbidden"].includes(failure.kind)) stopAfterGitHubBlock = true;
-          process.stderr.write(`${JSON.stringify({ event: "partition_failure", partition_key: partition.partition_key, error_kind: failure.kind, state: status ?? "failed" })}\n`);
+          stderr(`${JSON.stringify({ event: "partition_failure", partition_key: partition.partition_key, error_kind: failure.kind, state: status ?? "failed" })}\n`);
           break;
         }
 
@@ -276,12 +311,12 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
           .map((item) => [item.id, item])).values()];
         const remainingCandidateBudget = parsed.maxCandidates - candidatesSeen;
         if (uniqueRepositories.length > remainingCandidateBudget) {
-          const released = await supabase.rpc("release_discovery_partition", {
+          stage = "lease_release";
+          await invoke("release_discovery_partition", {
             p_query_id: partition.id,
             p_worker_id: workerId,
             p_lease_token: partition.lease_token,
           });
-          if (released.error) throw new Error("Supabase could not release a partition at the candidate limit.");
           releasedAtCandidateLimit = true;
           partitionSettled = true;
           break;
@@ -300,7 +335,8 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
         else nextState = "more";
 
         const rateLimit = searchResult.provenance.rateLimit;
-        const committed = await supabase.rpc("commit_discovery_page", {
+        stage = "page_commit";
+        const committed = await invoke("commit_discovery_page", {
           p_query_id: partition.id,
           p_worker_id: workerId,
           p_lease_token: partition.lease_token,
@@ -330,16 +366,17 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
           p_children: (children ?? []).map(toDatabasePartition),
           p_lease_seconds: 180,
         });
-        if (committed.error) throw new Error("Supabase rejected the transactional discovery page commit.");
         const commitInfo = typeof committed.data === "object" && committed.data !== null
           ? committed.data as Record<string, unknown>
           : {};
-        if (commitInfo.committed === false) throw new Error("Discovery page was already committed; claim state is inconsistent.");
+        if (commitInfo.committed !== true) {
+          throw new DiscoveryOperationalError("page_commit", "Supabase did not confirm a transactional page commit; candidate counts were not advanced.");
+        }
         pagesCommitted += 1;
         candidatesSeen += uniqueRepositories.length;
         partitionSettled = nextState !== "more";
         if (nextState === "review") needsReview += 1;
-        process.stdout.write(`${JSON.stringify({
+        stdout(`${JSON.stringify({
           event: "page_committed",
           partition_key: partition.partition_key,
           page,
@@ -355,7 +392,8 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
         page += 1;
       }
       if (controller.signal.aborted && !partitionSettled) {
-        await supabase.rpc("release_discovery_partition", {
+        stage = "lease_release";
+        await invoke("release_discovery_partition", {
           p_query_id: partition.id,
           p_worker_id: workerId,
           p_lease_token: partition.lease_token,
@@ -366,23 +404,23 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
       if (interrupted || stopAfterGitHubBlock) break;
     }
 
-    const partitionStates = await (supabase as unknown as ReturnType<typeof createSupabaseAdminClient>)
-      .from("discovery_queries")
+    stage = "progress_summary";
+    const partitionStates = await supabase.from("discovery_queries")
       .select("status")
       .eq("plan_name", parsed.plan)
       .eq("plan_version", INITIAL_PLAN_VERSION);
-    if (partitionStates.error) throw new Error("Supabase could not summarize discovery progress.");
+    if (partitionStates.error) throw databaseFailure(stage, partitionStates.error);
     const statuses = partitionStates.data.map((row) => row.status as string);
     const complete = statuses.length > 0 && statuses.every((status) => status === "completed");
     const allTerminal = statuses.length > 0 && statuses.every((status) => ["completed", "failed", "needs_review"].includes(status));
     const jobStatus = interrupted ? "cancelled" : complete ? "succeeded" : allTerminal && failures > 0 && pagesCommitted === 0 ? "failed" : "partial";
-    const finished = await supabase.rpc("finish_discovery_job", {
+    stage = "job_finish";
+    await invoke("finish_discovery_job", {
       p_job_id: jobId,
       p_status: jobStatus,
       p_error_summary: failures ? `${failures} terminal partition failure(s); ${retriesScheduled} retry(s) scheduled.` : null,
     });
-    if (finished.error) throw new Error("Supabase could not finish the discovery job.");
-    process.stdout.write(`${JSON.stringify({
+    stdout(`${JSON.stringify({
       event: "discovery_summary",
       job_id: jobId,
       status: jobStatus,
@@ -395,9 +433,14 @@ export async function runDiscoveryCli(args: string[]): Promise<number> {
       interrupted,
     })}\n`);
     return interrupted ? 130 : failures > 0 ? 1 : 0;
-  } catch {
-    process.stderr.write(`${JSON.stringify({ event: "failure", stage: "execution", message: "Discovery stopped after an operational error." })}\n`);
-    if (jobId) {
+  } catch (error) {
+    const failure = error instanceof DiscoveryOperationalError
+      ? { stage: error.stage, message: error.message }
+      : stage === "database_configuration"
+        ? { stage, message: "Supabase admin configuration is missing or invalid. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY." }
+        : { stage: "execution", message: "Discovery stopped after an operational error." };
+    stderr(`${JSON.stringify({ event: "failure", ...failure })}\n`);
+    if (jobId && supabase && failure.stage !== "database_connection") {
       await supabase.rpc("finish_discovery_job", {
         p_job_id: jobId,
         p_status: controller.signal.aborted ? "cancelled" : "failed",
@@ -427,23 +470,6 @@ function toDatabasePartition(partition: DiscoveryPartition) {
   };
 }
 
-export function applyCandidatePageLimit(
-  partitions: DiscoveryPartition[],
-  maxCandidates: number,
-): DiscoveryPartition[] {
-  const pageSize = Math.min(SEARCH_PAGE_SIZE, maxCandidates);
-  return partitions.map((partition) => {
-    if (partition.parameters.perPage <= pageSize) return partition;
-    const adjusted = {
-      ...partition,
-      parameters: { ...partition.parameters, perPage: pageSize },
-      fingerprint: "",
-    };
-    adjusted.fingerprint = calculatePartitionFingerprint(adjusted);
-    return adjusted;
-  });
-}
-
 function toPlanPartition(partition: ClaimedPartition): DiscoveryPartition {
   const dateRange = partition.query_text.match(/created:(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})/);
   const range = dateRange
@@ -469,6 +495,38 @@ function readJsonField(value: unknown, field: string): string | null {
   if (typeof value !== "object" || value === null) return null;
   const fieldValue = (value as Record<string, unknown>)[field];
   return typeof fieldValue === "string" ? fieldValue : null;
+}
+
+function databaseFailure(stage: string, error: unknown): DiscoveryOperationalError {
+  const details = typeof error === "object" && error !== null
+    ? error as { message?: unknown; code?: unknown; status?: unknown; name?: unknown }
+    : {};
+  const message = typeof details.message === "string" ? details.message : "";
+  const code = typeof details.code === "string" ? details.code : undefined;
+  const status = typeof details.status === "number" ? details.status : undefined;
+  const diagnostic = `${code ?? ""} ${details.name ?? ""} ${message}`.toLowerCase();
+  if ((status !== undefined && status >= 500)
+    || /fetch failed|failed to fetch|network error|econnrefused|enotfound|etimedout|econnreset|pgrst00[0-3]|connection refused|socket hang up/.test(diagnostic)) {
+    return new DiscoveryOperationalError(
+      "database_connection",
+      "Supabase PostgREST is unreachable. Check NEXT_PUBLIC_SUPABASE_URL and confirm the configured project is running; for local Supabase, run `bun run supabase start`. No hosted fallback was attempted.",
+    );
+  }
+
+  if (stage === "plan_registration" && code === "55000") {
+    const active = message.match(/^active discovery lease prevents incompatible plan registration for partition ([A-Za-z0-9._-]{1,128})/);
+    if (active) {
+      return new DiscoveryOperationalError(stage, `Active discovery lease prevents changing partition ${active[1]}; the existing worker and checkpoint were preserved.`);
+    }
+    const incompatible = message.match(/^incompatible discovery definition for partition ([A-Za-z0-9._-]{1,128})/);
+    if (incompatible) {
+      return new DiscoveryOperationalError(stage, `Partition ${incompatible[1]} has a different definition in this plan version. Keep its checkpoint and use a new plan version or an explicit reset migration.`);
+    }
+  }
+
+  const safeCode = code && /^[A-Z0-9]{5}$/.test(code) ? ` (database code ${code})` : "";
+  const operation = stage.replaceAll("_", " ");
+  return new DiscoveryOperationalError("database_operation", `Supabase request failed during ${operation}${safeCode}. Check the configured project and discovery database state.`);
 }
 
 if (process.argv[1]?.endsWith("/scripts/discover.ts")) {

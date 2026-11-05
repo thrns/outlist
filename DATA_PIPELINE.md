@@ -151,16 +151,35 @@ bun run discover -- --plan initial --execute --max-queries 2 --max-pages 2 --max
 bun run discover -- --plan initial --execute --resume --max-queries 2 --max-pages 2 --max-candidates 200
 ```
 
-`--resume` makes checkpoint reuse explicit. Executions also preserve compatible
-checkpoints by default; a changed fingerprint resets that partition before it
-can resume. If `--max-candidates` is below the normal 100-result page size, the
-worker lowers `per_page` to that cap and fingerprints the changed query
-parameters. A worker claim uses PostgreSQL row locking and `SKIP LOCKED`, a
-worker ID, expiring lease, and random fencing token. A stale worker cannot
-commit after expiry or after another worker reclaims the row. Retry eligibility
-and safe error summaries are persisted. GitHub's `search` resource headers are
-stored separately from the core API budget. Long retry delays are scheduled in
-PostgreSQL rather than causing a tight retry loop.
+`--resume` reuses the compatible persisted checkpoint. Executions without the
+flag also preserve compatible checkpoints; neither path restarts a completed
+or partially committed partition at page one. Query definitions and their
+fingerprints remain stable when execution limits change. `--max-candidates`
+is a run budget, not a page-size setting: if a fetched page exceeds the
+remaining budget, the worker releases the lease without committing or moving
+the cursor, so no search results are skipped. The registered page size stays
+at 100 for the initial plan. A genuinely changed query or page size in the same
+plan version is rejected with the partition name and preserves its checkpoint.
+An intentional incompatible definition requires a new plan version, which
+resets that partition's checkpoint only after any live lease ends, or an
+explicit reset migration. Existing candidate rows, provenance, and review
+decisions remain intact.
+
+A worker claim uses PostgreSQL row locking and `SKIP LOCKED`, a worker ID,
+expiring lease, and random fencing token. Exact plan re-registration is a
+no-op for the partition row, including its lease, owner, checkpoint, counters,
+and job attribution. An incompatible registration cannot invalidate a live
+lease. A stale worker cannot commit after expiry or after another worker
+reclaims the row. Retry eligibility and safe error summaries are persisted.
+GitHub's `search` resource headers are stored separately from the core API
+budget. Long retry delays are scheduled in PostgreSQL rather than causing a
+tight retry loop.
+
+The CLI constructs its privileged Supabase client inside its operational error
+handler. Missing configuration and PostgREST connectivity failures return
+structured, nonzero errors without credentials or success summaries. Database
+connection failures are reported separately from GitHub API failures; the
+worker never switches to a hosted project when local Supabase is unreachable.
 
 Each committed page is one database function transaction. It inserts compact
 page provenance (no raw search payload), upserts validated candidate metadata,
@@ -227,9 +246,14 @@ place for demo compatibility; no sample project is imported into production
 tables.
 
 Run `bun run supabase:db-test` for pgTAP authorization, integrity, transaction,
-checkpoint, retry, and RLS tests. CI also runs `bun run test:discovery-db`
-against disposable local Supabase to exercise concurrent claims, fencing,
-provenance, and idempotent page commits. Run
+checkpoint, incompatible-registration, retry, lease fencing, and RLS tests. CI
+also runs `bun run test:discovery-db` against disposable local Supabase. It
+exercises real PostgreSQL/PostgREST claims and page commits, and runs the actual
+discovery CLI orchestration against deterministic mocked GitHub Search HTTP
+responses. The fixtures cover resume, execution-budget changes, overlapping
+IDs and renames, saturation and date splitting, retry persistence, and the
+absence of canonical writes. These HTTP fixtures do not constitute a successful
+live GitHub crawl or hosted Supabase verification. Run
 `bun run supabase:db-lint` for local database linting, and
 `bun run supabase:types` to regenerate `src/lib/supabase/database.types.ts`
 from the local database. CI starts the pinned local Supabase stack on GitHub

@@ -133,6 +133,118 @@ select public.commit_discovery_page(
 select is((select status from public.discovery_queries where partition_key = 'pg-test-c'), 'needs_review', 'saturated parent remains visible for review');
 select is((select count(*)::integer from public.discovery_queries where partition_key in ('pg-test-c-left', 'pg-test-c-right') and status = 'pending'), 2, 'safe narrower partitions are queued');
 
+-- Registration by another worker must preserve a live lease and checkpoint.
+create temporary table registration_job_a (job_id uuid);
+insert into registration_job_a
+select public.start_discovery_job(
+  'pg-registration-test', 'pg-registration-v1',
+  '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration is:public","query_fingerprint":"pg-registration-fp","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"registration lease fixture"}]'::jsonb
+);
+create temporary table registration_claim_a as
+select * from public.claim_discovery_partitions((select job_id from registration_job_a), 'pg-registration-worker-a', 1, 180);
+create temporary table registration_state_before as
+select lease_token, cursor, pages_fetched, candidates_found, total_count, incomplete_results, job_id,
+  lock_owner, lease_expires_at, status
+from public.discovery_queries where partition_key = 'pg-registration-active';
+create temporary table registration_job_b (job_id uuid);
+insert into registration_job_b
+select public.start_discovery_job(
+  'pg-registration-test', 'pg-registration-v1',
+  '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration is:public","query_fingerprint":"pg-registration-fp","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"registration lease fixture"}]'::jsonb
+);
+select is((select lease_token from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select lease_token from registration_state_before), 'unchanged registration preserves the active lease token');
+select is((select lock_owner from public.discovery_queries where partition_key = 'pg-registration-active'),
+  'pg-registration-worker-a', 'unchanged registration preserves the active owner');
+select is((select job_id from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select job_id from registration_state_before), 'unchanged registration preserves original job ownership');
+select is((select pages_fetched from public.discovery_queries where partition_key = 'pg-registration-active'), 0,
+  'unchanged registration preserves page counters');
+select is((select candidates_found from public.discovery_queries where partition_key = 'pg-registration-active'), 0,
+  'unchanged registration preserves candidate counters');
+create temporary table rejected_registration_job_count as
+select count(*)::integer as jobs from public.ingestion_jobs where metadata->>'plan_name' = 'pg-registration-test';
+select throws_ok(
+  $$select public.start_discovery_job(
+    'pg-registration-test', 'pg-registration-v1',
+    '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration-v2 is:public","query_fingerprint":"pg-registration-fp-v2","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"incompatible active definition"}]'::jsonb
+  )$$,
+  '55000', 'active discovery lease prevents incompatible plan registration for partition pg-registration-active',
+  'incompatible definition is rejected with a clear live-lease error'
+);
+select throws_ok(
+  $$select public.start_discovery_job(
+    'pg-registration-test', 'pg-registration-v2',
+    '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration-v2 is:public","query_fingerprint":"pg-registration-fp-v2","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"versioned active definition"}]'::jsonb
+  )$$,
+  '55000', 'active discovery lease prevents incompatible plan registration for partition pg-registration-active',
+  'a plan-version bump cannot invalidate a live lease'
+);
+select is((select count(*)::integer from public.ingestion_jobs where metadata->>'plan_name' = 'pg-registration-test'),
+  (select jobs from rejected_registration_job_count), 'rejected registration rolls back its newly created job atomically');
+select is((select lease_token from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select lease_token from registration_state_before), 'rejected registration leaves the original token unchanged');
+select is((select cursor::text from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select cursor::text from registration_state_before), 'rejected registration leaves the original cursor unchanged');
+select is((select pages_fetched from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select pages_fetched from registration_state_before), 'rejected registration leaves page counters unchanged');
+select is((select candidates_found from public.discovery_queries where partition_key = 'pg-registration-active'),
+  (select candidates_found from registration_state_before), 'rejected registration leaves candidate counters unchanged');
+
+select public.commit_discovery_page(
+  (select id from registration_claim_a), 'pg-registration-worker-a', (select lease_token from registration_claim_a),
+  'pg-registration-fp', 1, clock_timestamp(),
+  'https://api.github.com/search/repositories?q=topic%3Alease-registration%20is%3Apublic&per_page=1&page=1',
+  200, '{}'::jsonb, 2, false, 1,
+  '[{"provider_repository_id":"991002","owner_login":"registration","full_name":"registration/tool","canonical_url":"https://github.com/registration/tool","stars":1,"forks":0,"provider_created_at":"2025-01-01T00:00:00Z","provider_updated_at":"2026-01-01T00:00:00Z"}]'::jsonb,
+  'yield', '[]'::jsonb, 180
+);
+create temporary table registration_claim_b as
+select * from public.claim_discovery_partitions((select job_id from registration_job_b), 'pg-registration-worker-b', 1, 180);
+select is((select (cursor->>'next_page')::integer from registration_claim_b), 2,
+  'resumed worker B claims the persisted second page');
+select public.commit_discovery_page(
+  (select id from registration_claim_b), 'pg-registration-worker-b', (select lease_token from registration_claim_b),
+  'pg-registration-fp', 2, clock_timestamp(),
+  'https://api.github.com/search/repositories?q=topic%3Alease-registration%20is%3Apublic&per_page=1&page=2',
+  200, '{}'::jsonb, 2, false, 1, '[]'::jsonb, 'exhausted', '[]'::jsonb, 180
+);
+select is((select pages_fetched from public.discovery_queries where partition_key = 'pg-registration-active'), 2,
+  'resumed execution retains and advances both committed pages');
+select is((select (cursor->>'next_page')::integer from public.discovery_queries where partition_key = 'pg-registration-active'), 3,
+  'resumed execution leaves the next page after its committed checkpoint');
+select throws_ok(
+  $$select public.start_discovery_job(
+    'pg-registration-test', 'pg-registration-v1',
+    '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration-v2 is:public","query_fingerprint":"pg-registration-fp-v2","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"same-version incompatible definition"}]'::jsonb
+  )$$,
+  '55000', 'incompatible discovery definition for partition pg-registration-active; keep its checkpoint and use a new plan version or an explicit reset migration',
+  'completed checkpoints reject incompatible definitions in the same plan version'
+);
+select is((select pages_fetched from public.discovery_queries where partition_key = 'pg-registration-active'), 2,
+  'rejected same-version definition change preserves completed checkpoint counters');
+select is((select status from public.discovery_queries where partition_key = 'pg-registration-active'), 'completed',
+  'rejected same-version definition change preserves completed status');
+update public.repository_candidates set queue_status = 'discarded', review_status = 'rejected'
+where provider = 'github' and provider_repository_id = '991002';
+select public.start_discovery_job(
+  'pg-registration-test', 'pg-registration-v2',
+  '[{"partition_key":"pg-registration-active","provider":"github","query_text":"topic:lease-registration-v2 is:public","query_fingerprint":"pg-registration-fp-v2","query_parameters":{"sort":"stars","order":"desc","per_page":1},"date_range":{},"intended_coverage":"explicit versioned definition change"}]'::jsonb
+);
+select is((select status from public.discovery_queries where partition_key = 'pg-registration-active'), 'pending',
+  'an explicit plan-version change queues a fresh incompatible definition');
+select is((select pages_fetched from public.discovery_queries where partition_key = 'pg-registration-active'), 0,
+  'an explicit plan-version change resets only checkpoint counters');
+select is((select count(*)::integer from public.repository_candidates where provider_repository_id = '991002'), 1,
+  'explicit checkpoint reset preserves the candidate row');
+select is((select queue_status from public.repository_candidates where provider_repository_id = '991002'), 'discarded',
+  'explicit checkpoint reset preserves discarded review state');
+select is((select review_status from public.repository_candidates where provider_repository_id = '991002'), 'rejected',
+  'explicit checkpoint reset preserves rejected review decision');
+select is((select count(*)::integer from public.repository_candidate_sources where candidate_id =
+  (select id from public.repository_candidates where provider_repository_id = '991002')), 1,
+  'explicit checkpoint reset preserves prior candidate provenance');
+
 create temporary table lease_test_job (job_id uuid);
 insert into lease_test_job
 select public.start_discovery_job(
@@ -193,6 +305,18 @@ select throws_ok($$select * from public.repository_candidates$$, '42501', null, 
 select throws_ok($$select * from public.repository_candidate_sources$$, '42501', null, 'ordinary clients cannot read candidate provenance links');
 select throws_ok($$select * from public.source_records$$, '42501', null, 'ordinary clients cannot read source provenance');
 select throws_ok($$select * from public.ingestion_jobs$$, '42501', null, 'ordinary clients cannot read ingestion job state');
+select throws_ok(
+  $$select public.start_discovery_job('ordinary-client-test', 'v1', '[]'::jsonb)$$,
+  '42501', null, 'anonymous role cannot invoke privileged discovery registration'
+);
+reset role;
+
+set local role authenticated;
+set local "request.jwt.claims" = '{"role":"authenticated"}';
+select throws_ok(
+  $$select public.start_discovery_job('ordinary-client-test', 'v1', '[]'::jsonb)$$,
+  '42501', null, 'authenticated role cannot invoke privileged discovery registration'
+);
 reset role;
 
 select * from finish();

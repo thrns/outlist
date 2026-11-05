@@ -47,7 +47,7 @@ jobs:
           bun run supabase db query --file supabase/ci/assert_category_taxonomy.sql
       - name: Run database tests
         run: bun run supabase test db
-      - name: Exercise transactional discovery claims against local Supabase
+      - name: Exercise the discovery queue and worker against local Supabase
         run: |
           eval "$(./node_modules/.bin/supabase status -o env)"
           NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
