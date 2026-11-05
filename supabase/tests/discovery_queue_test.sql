@@ -172,6 +172,8 @@ select public.fail_discovery_partition(
   'validation; HTTP 422', false, null
 );
 select is((select status from public.discovery_queries where partition_key = 'pg-lease-expiring'), 'failed', 'non-retryable failures become terminal');
+select is((select items_failed from public.ingestion_jobs where id = (select job_id from lease_test_job)), 1,
+  'explicit non-retryable failure increments the owning job counter');
 create temporary table max_retry_claim as
 select * from public.claim_discovery_partitions((select job_id from lease_test_job), 'pg-max-retry-worker', 1, 30);
 update public.discovery_queries set retry_count = max_attempts, lease_expires_at = clock_timestamp() - interval '1 second'
@@ -181,7 +183,7 @@ select is((select count(*)::integer from public.claim_discovery_partitions(
   'an abandoned partition at the retry limit is not reclaimed');
 select is((select status from public.discovery_queries where partition_key = 'pg-lease-retry-exhausted'), 'failed',
   'an abandoned partition at the retry limit becomes terminal');
-select is((select items_failed from public.ingestion_jobs where id = (select job_id from lease_test_job)), 1,
+select is((select items_failed from public.ingestion_jobs where id = (select job_id from lease_test_job)), 2,
   'automatic terminal recovery increments the owning job failure counter');
 
 set local role anon;
