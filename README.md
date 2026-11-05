@@ -51,13 +51,16 @@ manager lockfiles.
 - `/project/[id]` — Project details and related projects
 - `/alternatives` — Browse proprietary-software alternatives
 - `/submit` — Browser-local submission queue
-- `/admin` — Browser-local review queue and mock sync controls
+- `/admin/login` — Invite-only administrator email OTP sign-in
+- `/admin` — Protected browser-local review queue and mock sync controls
 
 The existing component-based UI, design, CSS, and all 33 sample projects remain
 in place. Demo repository metrics are illustrative. Directory edits are stored
 in browser `localStorage`; they are not shared across users or devices. The
 admin and ingestion controls are demonstrations and are not connected to a
-database or external repository service.
+database or external repository service. `/admin` requires Supabase Auth and a
+matching UUID in the private `public.admin_users` allowlist. See
+[ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
 
 ## Supabase local development
 
@@ -93,7 +96,8 @@ history, submissions, moderation, editorial overrides, and an administrator
 allowlist. It seeds 11 categories and no sample projects. RLS and explicit
 grants expose only published catalog information to anonymous and ordinary
 authenticated users. Those roles cannot write projects, submissions, or logo
-objects. Admin authentication and submission endpoints come later.
+objects. M0-03 adds invite-only admin OTP authentication, but the dashboard
+does not write to these tables.
 
 The `project-logos` bucket is public for approved assets, limited to 2 MiB and
 PNG/JPEG/WebP. Public bucket downloads bypass Storage object read policies, so
@@ -108,14 +112,17 @@ Never put a secret key in a `NEXT_PUBLIC_` variable.
 ## Architecture and plans
 
 - [Architecture](ARCHITECTURE.md) describes the current app and intended system boundaries.
+- [Administrator authentication](ADMIN_AUTH.md) documents OTP setup, session
+  handling, authorization, and safe administrator provisioning.
 - [Data pipeline](DATA_PIPELINE.md) distinguishes the current static data from planned ingestion.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
-The demo's existing routes and localStorage behavior remain unchanged and do
-not query the database. The schema, RLS, taxonomy, logo bucket, and generated
-types are implemented; the search RPC, server-side catalog integration,
-submission endpoint, project publication tools, ingestion worker, and
-administrator authentication are later milestones. GitHub Actions runs a
+Public demo routes and their localStorage behavior do not query the database.
+M0-03 adds invite-only administrator OTP authentication, SSR session refresh,
+and per-request UUID allowlist authorization for the demo admin route; it does
+not connect moderation or ingestion controls to production tables. The search
+RPC, server-side catalog integration, submission endpoint, project publication
+tools, and ingestion worker remain later milestones. GitHub Actions runs a
 clean local Supabase stack, migration reset, pgTAP tests, database lint, and
 type drift check without hosted credentials.
 

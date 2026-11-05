@@ -1,5 +1,5 @@
 begin;
-select plan(61);
+select plan(66);
 
 -- Schema presence and key relationship constraints.
 select has_table('public', 'projects', 'projects table exists');
@@ -281,6 +281,19 @@ select throws_ok(
   $$insert into public.submissions (request_type, suggested_name) values ('suggestion', 'Direct write')$$,
   '42501', null, 'normal authenticated users cannot write submissions directly'
 );
+select throws_ok($$select * from public.admin_users$$, '42501', null, 'normal authenticated users cannot read admin allowlist entries');
+select throws_ok(
+  $$insert into public.admin_users (user_id) values ('00000000-0000-4000-8000-000000000099')$$,
+  '42501', null, 'normal authenticated users cannot add administrators'
+);
+select throws_ok(
+  $$update public.admin_users set added_by = '00000000-0000-4000-8000-000000000099'$$,
+  '42501', null, 'normal authenticated users cannot modify administrator entries'
+);
+select throws_ok(
+  $$delete from public.admin_users$$,
+  '42501', null, 'normal authenticated users cannot revoke administrator entries'
+);
 select throws_ok($$select * from public.review_queue$$, '42501', null, 'normal authenticated users cannot read moderation records');
 select throws_ok(
   $$insert into storage.objects (bucket_id, name, metadata)
@@ -289,6 +302,11 @@ select throws_ok(
 );
 
 reset role;
+
+select ok(
+  has_table_privilege('service_role', 'public.admin_users', 'select,insert,update,delete'),
+  'administrator allowlist changes require the privileged service role'
+);
 
 -- Publication guard rejects incomplete or unverified projects.
 select throws_ok(

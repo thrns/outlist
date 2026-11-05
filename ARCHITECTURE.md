@@ -11,9 +11,10 @@ browser `localStorage`.
 Supabase infrastructure now includes separated browser, SSR server, and
 privileged server clients, Zod configuration validation, versioned SQL
 migrations, a normalized PostgreSQL catalog, database policies, and a
-`project-logos` Storage bucket. The UI still reads the committed 33-project
-JSON catalog and does not call those clients. No ingestion worker or
-database-backed public pages run yet.
+`project-logos` Storage bucket. Public UI still reads the committed 33-project
+JSON catalog. The admin route uses Supabase Auth for invite-only OTP sign-in
+and authorization, while its moderation controls remain localStorage
+demonstrations. No ingestion worker or database-backed public pages run yet.
 
 ## Intended system
 
@@ -21,7 +22,8 @@ database-backed public pages run yet.
 Browser
   └─ Next.js UI and route handlers / server actions
        ├─ Supabase SSR client: publishable key + request cookies
-       ├─ Server-side access checks: user identity, roles, and policies
+       ├─ Admin Proxy: verified claims refresh for /admin routes only
+       ├─ Admin server gate: verified Auth UUID + fresh admin_users lookup
        └─ Privileged Supabase client: secret key, isolated server modules
             ├─ Supabase PostgreSQL: catalog, provenance, moderation, and ingestion state
             └─ Supabase Storage: approved project logos
@@ -38,7 +40,7 @@ the indexed search document; M2-01 will add the public search RPC. Storage is
 limited to approved logo assets. Permitted source payloads are stored as
 provenance-linked JSON in the private `source_records` table.
 
-## Security boundaries
+## Administrator authentication and security boundaries
 
 - Client components may import only the browser client. It accepts the public
   URL and publishable key.
@@ -48,6 +50,28 @@ provenance-linked JSON in the private `source_records` table.
 - The privileged client uses `SUPABASE_SECRET_KEY` and imports `server-only`.
   It does not read or reuse a browser session and has session persistence,
   refresh, and URL detection disabled.
+- `/admin/login` requests an email OTP with `shouldCreateUser: false`; a Server
+  Action verifies the code using `verifyOtp({ type: "email" })`. Auth errors
+  during the request step produce the same generic response for every address.
+- Root `proxy.ts` matches only `/admin` and `/admin/*`. It uses the publishable
+  key and `getClaims()` to refresh the SSR cookie session, copies cookie updates
+  to both the forwarded request and response, and never creates the privileged
+  client. Cookies are HTTP-only, same-site lax, and secure in production.
+- The dynamic admin layout gates every `/admin/*` page except the login route.
+  `/admin` also calls `requireAdmin()` itself. The helper verifies the session
+  with `getClaims()`, validates the `sub` UUID, and makes a fresh server-only
+  exact-match query against `public.admin_users` for each call. It trusts no
+  email, user metadata, client storage, or client-supplied role. Removed rows
+  revoke access on the next protected request.
+- Protected pages are dynamically rendered and marked `private, no-store`.
+  Any future protected Server Action or Route Handler must call
+  `requireAdmin()` independently before performing work; Proxy routing alone
+  is not authorization.
+- Logout is a POST Server Action that calls `signOut()`, clears Supabase Auth
+  cookies, and redirects to `/admin/login`.
+- `public.admin_users` remains private under its existing RLS and grants. The
+  privileged server key performs the membership read; ordinary database roles
+  cannot read or modify the allowlist.
 - Client constructors validate credentials when called. Missing credentials
   therefore do not block rendering or production builds that do not invoke a
   Supabase operation.
@@ -55,8 +79,7 @@ provenance-linked JSON in the private `source_records` table.
   authenticated roles can read only published catalog records and safe
   relationships; there are no client write policies. Submissions, provenance,
   candidate queues, ingestion history, moderation, overrides, and admin
-  allowlisting are private. Auth pages and admin authorization workflows are
-  reserved for M0-03.
+  allowlisting are private.
 
 ## Schema and generated types
 

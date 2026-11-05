@@ -28,10 +28,27 @@ This roadmap separates the current demo from planned platform capabilities.
 - Local database execution depends on a working Docker-compatible runtime;
   GitHub Actions provides the independent migration, pgTAP, lint, and type
   generation environment.
-- M0-03 still needs administrator authentication and authorization.
 - Repository ingestion, validated submission endpoints, project publication
   tools, public database queries, search RPC, and UI integration remain later
   work.
+
+## M0-03 — Secure administrator authentication
+
+- Add invite-only Supabase email OTP login with account creation disabled.
+- Refresh SSR sessions with a scoped Next.js 16 Proxy using verified claims.
+- Protect admin pages with a fresh server-side Auth UUID and allowlist check on
+  every request; keep `admin_users` private under RLS and grants.
+- Add POST logout, local OTP template configuration, provisioning guidance,
+  and tests for validation, authorization, revocation, and allowlist privacy.
+- Keep moderation, publishing, and ingestion controls as clearly labeled
+  browser-local demonstrations.
+
+### Remaining limitations after M0-03
+
+- Real OTP delivery and verification require a running local Supabase stack or
+  hosted project. Unit tests and pgTAP do not prove external email delivery.
+- Admin moderation, project publishing, and sync controls still update only
+  browser `localStorage`; no production database writes are implemented.
 
 ## Later milestones
 
@@ -39,11 +56,9 @@ This roadmap separates the current demo from planned platform capabilities.
   the server and access-control model is ready.
 - Build a scheduled Bun ingestion worker with validation, provenance,
   idempotency, and operational reporting.
-- Add administrator authentication and protected moderation workflows.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
 These are plans only. The local schema and policies exist, but hosted Supabase
-deployment, a database-backed catalog, repository ingestion, production
-search, and administrator authentication are not operational in the current
-demo.
+deployment, a database-backed catalog, repository ingestion, production search,
+and database-backed moderation are not operational in the current demo.

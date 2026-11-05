@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
-import { validateSupabaseAdminEnv } from "@/lib/env";
+import { validateSupabaseAdminEnv } from "@/lib/env/admin";
 import type { Database } from "@/lib/supabase/database.types";
 
 export function createSupabaseAdminClient() {
@@ -15,6 +15,9 @@ export function createSupabaseAdminClient() {
       autoRefreshToken: false,
       detectSessionInUrl: false,
       persistSession: false,
+    },
+    global: {
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
     },
   });
 }
