@@ -35,6 +35,8 @@ existing routes.
 | `bun run lint` | Run ESLint with the Next.js rules |
 | `bun run test` | Run Vitest tests |
 | `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
+| `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
+| `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -60,7 +62,9 @@ The existing component-based UI, design, CSS, and all 33 sample projects remain
 in place. Demo repository metrics are illustrative. Directory edits are stored
 in browser `localStorage`; they are not shared across users or devices. The
 admin and ingestion controls are demonstrations and are not connected to a
-database or external repository service. `/admin` requires Supabase Auth and a
+database. A separate read-only GitHub API adapter can inspect one explicitly
+named repository; it does not discover candidates or persist records. `/admin`
+requires Supabase Auth and a
 matching UUID in the private `public.admin_users` allowlist. See
 [ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
 
@@ -143,12 +147,19 @@ runs isolated Chromium authentication checks without hosted credentials.
 
 ## Environment variables
 
-`.env.example` contains placeholders only:
+`.env.example` contains placeholders only. `GITHUB_TOKEN` is optional and is
+read only by the server-side/Bun source adapter when a client is created:
 
 - `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — publishable client key
 - `SUPABASE_SECRET_KEY` — privileged server-only key
+- `GITHUB_TOKEN` — optional GitHub token for authenticated REST API reads and
+  higher rate limits; never expose it to browser code
 
 The browser and cookie-aware server clients use only public credentials. The
-privileged client is marked server-only and disables session persistence. No
-Supabase credentials are required by CI.
+privileged client is marked server-only and disables session persistence. Do
+not set the GitHub token in a `NEXT_PUBLIC_` variable. The GitHub adapter uses
+`Authorization: Bearer`, `Accept: application/vnd.github+json`, and REST API
+version `2022-11-28`; its optional smoke command is network dependent and is
+excluded from the ordinary test suite. No Supabase or GitHub credentials are
+required by ordinary unit tests or CI validation.

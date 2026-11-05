@@ -55,15 +55,40 @@ This roadmap separates the current demo from planned platform capabilities.
 - Admin moderation, project publishing, and sync controls still update only
   browser `localStorage`; no production database writes are implemented.
 
+## M1-01 — GitHub REST API adapter
+
+- Add a typed, Zod-validated, read-only Bun client for repository metadata by
+  path or numeric provider ID, languages, topics, detected license metadata,
+  releases, and rate-limit diagnostics.
+- Support optional server-side `GITHUB_TOKEN`, explicit GitHub API versioning,
+  ETags, bounded Link pagination, timeout, cancellation, retries, and structured
+  rate-limit and API errors.
+- Return parsed source data with provenance and preserve absent, null,
+  unavailable, and unsupported source-field states.
+- Add a local one-repository inspection CLI and mocked Vitest coverage.
+- Do not write to Supabase, discover repositories, verify licenses, classify
+  projects, or publish catalog entries.
+
+### Remaining limitations after M1-01
+
+- The adapter reads one explicitly named repository. Candidate discovery,
+  restartable Supabase queues, normalization, data persistence, scheduling,
+  quality checks, license verification, and publication are not implemented.
+- The optional CLI smoke test verifies only the requested repository and
+  endpoints; it does not validate the future scheduled ingestion pipeline.
+
 ## Later milestones
 
 - Implement server-side data access and replace browser-only persistence when
   the server and access-control model is ready.
-- Build a scheduled Bun ingestion worker with validation, provenance,
+- **M1-02:** Discover GitHub repository candidates, collect them from approved
+  queries, and ingest through restartable Supabase queues.
+- Build later scheduled ingestion workflows with validation, provenance,
   idempotency, and operational reporting.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
 These are plans only. The local schema and policies exist, but hosted Supabase
-deployment, a database-backed catalog, repository ingestion, production search,
-and database-backed moderation are not operational in the current demo.
+deployment, a database-backed catalog, repository discovery and ingestion,
+production search, and database-backed moderation are not operational in the
+current demo.

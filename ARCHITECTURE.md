@@ -14,7 +14,10 @@ migrations, a normalized PostgreSQL catalog, database policies, and a
 `project-logos` Storage bucket. Public UI still reads the committed 33-project
 JSON catalog. The admin route uses Supabase Auth for invite-only OTP sign-in
 and authorization, while its moderation controls remain localStorage
-demonstrations. No ingestion worker or database-backed public pages run yet.
+demonstrations. A standalone, read-only GitHub REST adapter and local
+single-repository inspection CLI are implemented. They do not write to
+Supabase; no discovery or ingestion worker and no database-backed public pages
+run yet.
 
 ## Intended system
 
@@ -33,12 +36,28 @@ Scheduled Bun ingestion worker
 ```
 
 The browser/server clients and database schema are implemented, but the public
-website and worker do not use them yet. The web application stays a modular
-monolith. A Bun worker is a separate scheduled process for repository
-ingestion, not another web service. PostgreSQL owns normalized catalog data and
-the indexed search document; M2-01 will add the public search RPC. Storage is
-limited to approved logo assets. Permitted source payloads are stored as
-provenance-linked JSON in the private `source_records` table.
+website and ingestion worker do not use them yet. The standalone GitHub
+adapter can read repository metadata by path or stable numeric repository ID,
+languages, topics, detected license metadata, releases, and rate-limit status.
+It runs independently of Next.js cookies or browser sessions. Its numeric
+provider ID is stable across repository renames, and each result carries typed
+data and source provenance. It has no Supabase client dependency and makes
+only `GET` requests. A Bun worker will be a separate scheduled process for
+repository ingestion, not another web service. PostgreSQL owns normalized
+catalog data and the indexed search document; M2-01 will add the public search
+RPC. Storage is limited to approved logo assets. Permitted source payloads are
+stored as provenance-linked JSON in the private `source_records` table by a
+future ingestion milestone.
+
+The GitHub client reads optional `GITHUB_TOKEN` configuration at construction
+time, sends it only as `Authorization: Bearer`, and uses GitHub REST API
+version `2022-11-28`. It remains in server/Bun code and is not imported by
+client components. ETags produce explicit `not_modified` results; topic and
+release pagination is sequential, origin/path checked, loop checked, and bounded. Rate
+limit, retry, timeout, abort, malformed payload, and HTTP errors have
+structured kinds. GitHub 404s remain ambiguous and do not establish deletion.
+GitHub license identifiers are source data and do not establish Outlist
+license verification or publication eligibility.
 
 ## Administrator authentication and security boundaries
 
