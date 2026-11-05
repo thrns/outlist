@@ -14,7 +14,6 @@ const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const secretKey = process.env.SUPABASE_SECRET_KEY;
 const requestMessage =
   "The request was processed. If this address is enabled for administrator access, follow the instructions sent to your inbox.";
-let allowlistedRequestResponse: string | null = null;
 
 if (!mailpitUrl || !apiUrl || !secretKey || !users.login?.email) {
   throw new Error("Auth E2E setup did not provide required local test values");
@@ -35,15 +34,13 @@ const supabaseAdmin: SupabaseClient = createClient(apiUrl, secretKey, {
   },
 });
 
-async function requestCode(page: Page, email: string) {
+async function requestCode(page: Page, email: string): Promise<string> {
   await page.goto("/admin/login");
   await page.getByLabel("Email address").fill(email);
   await page.getByRole("button", { name: "Send one-time code" }).click();
   const status = page.getByRole("status");
   await expect(status).toHaveText(requestMessage);
-  if (email === users.login.email) {
-    allowlistedRequestResponse = await status.innerText();
-  }
+  return status.innerText();
 }
 
 async function readMailpitCode(email: string) {
@@ -163,7 +160,7 @@ test("a non-admin Auth user can verify OTP but is denied dashboard access", asyn
   await requestCode(page, users.nonAdmin.email);
   const code = await readMailpitCode(users.nonAdmin.email);
   await verifyCode(page, code);
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.locator(".form-card p[role='alert']")).toHaveText(
     "Sign-in could not be completed. Check the code or contact the site administrator.",
   );
   await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
@@ -215,20 +212,22 @@ test("the sign-out form clears the browser session and blocks the old session", 
 
 test("an unknown email receives the same request response without creating an Auth user", async ({ page }) => {
   const unknownEmail = `e2e-${randomUUID()}-unknown@example.com`;
-  await requestCode(page, unknownEmail);
+  const allowlistedResponse = await requestCode(page, users.login.email);
+  const unknownResponse = await requestCode(page, unknownEmail);
 
   const { data, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
   expect(error).toBeNull();
   expect(data.users.some((user) => user.email === unknownEmail)).toBe(false);
-  expect(allowlistedRequestResponse).toBe(requestMessage);
-  await expect(page.getByRole("status")).toHaveText(allowlistedRequestResponse!);
+  expect(allowlistedResponse).toBe(requestMessage);
+  expect(unknownResponse).toBe(allowlistedResponse);
+  await expect(page.getByRole("status")).toHaveText(unknownResponse);
 });
 
 test("an incorrect OTP is rejected without granting access", async ({ page }) => {
   await requestCode(page, users.invalid.email);
   const code = await readMailpitCode(users.invalid.email);
   await verifyCode(page, wrongCode(code));
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.locator(".form-card p[role='alert']")).toHaveText(
     "That code is invalid or expired. Request a new one to continue.",
   );
 
@@ -250,7 +249,7 @@ test("an expired OTP is rejected without granting access", async ({ page }) => {
     .poll(() => Date.now(), { timeout: 65_000, intervals: [250, 1_000] })
     .toBeGreaterThanOrEqual(expiryBoundary);
   await verifyCode(page, code);
-  await expect(page.getByRole("alert")).toHaveText(
+  await expect(page.locator(".form-card p[role='alert']")).toHaveText(
     "That code is invalid or expired. Request a new one to continue.",
   );
 
