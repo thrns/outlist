@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 bun.lockb
-bun.lockb
 
 # Next.js
 .next/
@@ -29,9 +28,6 @@ next-env.d.ts
 
 # Deployment
 .vercel/
-
-# Supabase local state
-supabase/.temp/
 
 # Supabase local state
 supabase/.temp/
