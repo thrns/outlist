@@ -14,7 +14,7 @@ the administrator allowlist are trusted administrative operations.
 3. The administrator enters the emailed code. The Server Action validates the
    email and code with Zod, then calls `verifyOtp` with `type: "email"`.
 4. Supabase SSR stores the resulting session in HTTP-only cookies. The Next.js
-   16 `proxy.ts` refreshes sessions with `auth.getClaims()` only on `/admin` and
+   16 `src/proxy.ts` refreshes sessions with `auth.getClaims()` only on `/admin` and
    `/admin/*`, forwarding updated request and response cookies.
 5. The server admin layout and `/admin` page independently call
    `getAdminIdentity()` / `requireAdmin()`. These verify claims with

@@ -22,7 +22,7 @@ export default defineConfig({
   testDir: "./e2e/auth",
   fullyParallel: false,
   workers: 1,
-  timeout: 120_000,
+  timeout: 45_000,
   expect: { timeout: 10_000 },
   reporter: "line",
   outputDir:
@@ -30,11 +30,13 @@ export default defineConfig({
     join(tmpdir(), `outlist-auth-e2e-results-${process.pid}`),
   use: {
     baseURL: process.env.AUTH_E2E_BASE_URL ?? "http://127.0.0.1:3187",
+    actionTimeout: 10_000,
     browserName: "chromium",
     headless: true,
     screenshot: "off",
     video: "off",
     trace: "off",
+    navigationTimeout: 15_000,
     launchOptions: { env: browserEnv },
   },
 });
