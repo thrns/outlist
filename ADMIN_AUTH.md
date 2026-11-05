@@ -166,11 +166,35 @@ modify only the current browser's `localStorage`; they do not update production
 tables or call repository providers.
 
 Unit tests mock Supabase Auth and PostgREST calls. pgTAP checks ordinary-role
-access to `admin_users`. An OTP flow is fully verified only after running the
-app against a local or hosted Supabase project, receiving a real test OTP, and
-successfully verifying it. If Docker or a hosted project is unavailable, that
-end-to-end step remains unverified; test results must distinguish unit,
-database, and end-to-end coverage.
+access to `admin_users`. The `auth-e2e` CI job additionally starts a disposable
+local Supabase stack, applies the committed migrations, provisions temporary
+confirmed users through the Auth Admin API, inserts their real UUIDs into the
+allowlist, starts the production Next.js server, reads actual OTPs from
+Mailpit, and exercises the browser login, authorization, revocation, and logout
+flows with Chromium. It also checks anonymous and forged-header requests,
+unknown-email behavior, incorrect and expired OTPs, public-directory
+availability, SSR cookie attributes, and protected response cache headers.
+
+To run the same integration suite locally, install Chromium once and run:
+
+```bash
+bunx playwright install chromium
+bun run test:auth-e2e
+```
+
+This command requires a Docker-compatible runtime and a stopped local Supabase
+stack. It starts Supabase, resets the local database from migrations, uses
+temporary `.example.com` identities, then removes their Auth users, allowlist
+rows, and Mailpit messages and stops the stack with its volumes removed. It
+does not use hosted credentials. The runner suppresses Supabase CLI output so
+local keys and OTPs are not written to logs; browser traces, screenshots, and
+videos are disabled.
+
+This verifies the local Supabase Auth and PostgreSQL integration, local Mailpit
+delivery, and the production Next.js browser flow. It does not verify hosted
+Supabase project settings, administrator provisioning in a hosted project, or
+delivery through a hosted SMTP provider. Hosted SMTP delivery remains outside
+M0-03; Mailpit success is not evidence of production email deliverability.
 
 ## References
 
@@ -182,3 +206,6 @@ database, and end-to-end coverage.
 - [Local email templates and Mailpit](https://supabase.com/docs/guides/local-development/customizing-email-templates)
 - [Supabase SMTP setup](https://supabase.com/docs/guides/auth/auth-smtp)
 - [Next.js Proxy](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)
+- [Next.js Server Actions](https://nextjs.org/docs/app/getting-started/mutating-data)
+- [Playwright authentication and browser contexts](https://playwright.dev/docs/auth)
+- [Mailpit API](https://mailpit.axllent.org/docs/api-v1/)

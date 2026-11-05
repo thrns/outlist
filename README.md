@@ -10,6 +10,7 @@ provide the foundation for later milestones.
 - Bun **1.3.14** (pinned by `.bun-version` and `package.json`)
 - A supported operating system for Next.js
 - Docker-compatible container runtime only when starting the local Supabase stack
+- Chromium browser installation when running the real Auth browser integration suite
 
 ## Quick start
 
@@ -33,6 +34,7 @@ existing routes.
 | `bun run typecheck` | Run the strict TypeScript check |
 | `bun run lint` | Run ESLint with the Next.js rules |
 | `bun run test` | Run Vitest tests |
+| `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -105,6 +107,18 @@ only approved and validated files should ever be uploaded. SVG handling is
 excluded. Logo URLs, verification, and safe attribution live in
 `project_logos`; the current UI letter fallback remains unchanged.
 
+### Real authentication integration checks
+
+The separate `auth-e2e` CI job installs Chromium and runs
+`bun run test:auth-e2e`. The runner starts disposable local Supabase services,
+applies migrations, provisions temporary Auth users through the trusted Admin
+API, inserts their UUIDs into `public.admin_users`, runs the production Next.js
+server, reads actual OTPs from Mailpit, and tests the login and protected pages
+in Chromium. The local runner requires Docker and a stopped Supabase stack; it
+resets the local database and stops/removes the stack afterward. It never uses
+hosted credentials. Local Mailpit verification does not test hosted SMTP
+delivery or hosted Supabase configuration.
+
 When configuring the app to use local Supabase, copy `.env.example` to
 `.env.local` and fill it with values printed by `bun run supabase status`.
 Never put a secret key in a `NEXT_PUBLIC_` variable.
@@ -119,12 +133,13 @@ Never put a secret key in a `NEXT_PUBLIC_` variable.
 
 Public demo routes and their localStorage behavior do not query the database.
 M0-03 adds invite-only administrator OTP authentication, SSR session refresh,
-and per-request UUID allowlist authorization for the demo admin route; it does
-not connect moderation or ingestion controls to production tables. The search
-RPC, server-side catalog integration, submission endpoint, project publication
-tools, and ingestion worker remain later milestones. GitHub Actions runs a
-clean local Supabase stack, migration reset, pgTAP tests, database lint, and
-type drift check without hosted credentials.
+per-request UUID allowlist authorization, and real local browser verification
+for the demo admin route; it does not connect moderation or ingestion controls
+to production tables. Hosted Supabase configuration and hosted SMTP delivery
+remain unverified. The search RPC, server-side catalog integration, submission
+endpoint, project publication tools, and ingestion worker remain later
+milestones. GitHub Actions validates the app, rebuilds the local database, and
+runs isolated Chromium authentication checks without hosted credentials.
 
 ## Environment variables
 

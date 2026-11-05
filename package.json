@@ -10,6 +10,7 @@
     "typecheck": "bun --bun tsc --noEmit",
     "lint": "bun --bun eslint .",
     "test": "bun --bun vitest run",
+    "test:auth-e2e": "bun --bun scripts/auth-e2e.mjs",
     "validate:data": "bun scripts/validate-data.mjs",
     "check": "bun run typecheck && bun run lint && bun run test && bun run validate:data && bun run build",
     "supabase": "bunx supabase",
@@ -36,6 +37,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "^4.1.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",

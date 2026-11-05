@@ -40,13 +40,18 @@ This roadmap separates the current demo from planned platform capabilities.
   every request; keep `admin_users` private under RLS and grants.
 - Add POST logout, local OTP template configuration, provisioning guidance,
   and tests for validation, authorization, revocation, and allowlist privacy.
+- Verify real local OTP delivery and verification through Mailpit, production
+  Next.js session cookies, authorization, revocation, logout, and public-route
+  compatibility in an isolated Chromium CI job.
 - Keep moderation, publishing, and ingestion controls as clearly labeled
   browser-local demonstrations.
 
 ### Remaining limitations after M0-03
 
-- Real OTP delivery and verification require a running local Supabase stack or
-  hosted project. Unit tests and pgTAP do not prove external email delivery.
+- Hosted Supabase project settings and administrator provisioning remain
+  outside this verification. The CI suite covers local Supabase Auth,
+  PostgreSQL, Mailpit, and the production Next.js browser flow only; it does
+  not prove hosted SMTP delivery or hosted Auth behavior.
 - Admin moderation, project publishing, and sync controls still update only
   browser `localStorage`; no production database writes are implemented.
 

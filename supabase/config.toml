@@ -7,6 +7,9 @@ additional_redirect_urls = ["http://localhost:3000"]
 # Account creation is reserved for the trusted Supabase administrative workflow.
 enable_signup = false
 
+[auth.email]
+otp_expiry = 60
+
 [auth.email.template.magic_link]
 subject = "Your Outlist administrator sign-in code"
 content_path = "./supabase/templates/admin-otp.html"
