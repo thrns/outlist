@@ -376,16 +376,16 @@ isOneToOne: false
       referencedRelation: "discovery_queries"
       referencedColumns: ["id"]
     },{
-      foreignKeyName: "repository_candidates_repository_id_fkey"
-      columns: ["repository_id"]
-isOneToOne: true
-      referencedRelation: "repositories"
-      referencedColumns: ["id"]
-    },{
       foreignKeyName: "repository_candidates_enrichment_job_id_fkey"
       columns: ["enrichment_job_id"]
 isOneToOne: false
       referencedRelation: "ingestion_jobs"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_candidates_repository_id_fkey"
+      columns: ["repository_id"]
+isOneToOne: true
+      referencedRelation: "repositories"
       referencedColumns: ["id"]
     },{
       foreignKeyName: "repository_candidates_source_record_id_fkey"
@@ -530,16 +530,16 @@ isOneToOne: false
                   }
                   Relationships: [
                     {
-      foreignKeyName: "source_records_repository_id_fkey"
-      columns: ["repository_id"]
-isOneToOne: false
-      referencedRelation: "repositories"
-      referencedColumns: ["id"]
-    },{
       foreignKeyName: "source_records_candidate_id_fkey"
       columns: ["candidate_id"]
 isOneToOne: false
       referencedRelation: "repository_candidates"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "source_records_repository_id_fkey"
+      columns: ["repository_id"]
+isOneToOne: false
+      referencedRelation: "repositories"
       referencedColumns: ["id"]
     }
                   ]
@@ -589,35 +589,32 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "claim_github_enrichment_candidates":
-{ Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
-              "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string | null,"provider_repository_id": string
-            }[]
-                           },
-"commit_github_repository_enrichment":
-{ Args: { "p_candidate_id": string,"p_lease_token": string,"p_payload": Json,"p_worker_id": string }; Returns: Json
-                           },
-"fail_github_repository_enrichment":
-{ Args: { "p_candidate_id": string,"p_error_summary": string,"p_failure_provenance"?: Json | null,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
-                           },
-"finish_github_enrichment_job":
-{ Args: { "p_error_summary"?: string | null,"p_job_id": string,"p_status": string }; Returns: undefined
-                           },
-"start_github_enrichment_job":
-{ Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
-                           },
             "claim_discovery_partitions":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
               "cursor": Json,"id": string,"incomplete_results": boolean,"lease_expires_at": string,"lease_token": string,"partition_key": string,"query_fingerprint": string,"query_parameters": Json,"query_text": string,"total_count": number
             }[]
                            },
+"claim_github_enrichment_candidates":
+{ Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
+              "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string,"provider_repository_id": string
+            }[]
+                           },
 "commit_discovery_page":
 { Args: { "p_candidates": Json,"p_children"?: Json,"p_fetched_at": string,"p_http_status": number,"p_incomplete_results": boolean,"p_lease_seconds"?: number,"p_lease_token": string,"p_next_state": string,"p_page": number,"p_per_page": number,"p_query_fingerprint": string,"p_query_id": string,"p_source_metadata": Json,"p_source_url": string,"p_total_count": number,"p_worker_id": string }; Returns: Json
+                           },
+"commit_github_repository_enrichment":
+{ Args: { "p_candidate_id": string,"p_lease_token": string,"p_payload": Json,"p_worker_id": string }; Returns: Json
                            },
 "fail_discovery_partition":
 { Args: { "p_error_summary": string,"p_lease_token": string,"p_query_id": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
                            },
+"fail_github_repository_enrichment":
+{ Args: { "p_candidate_id": string,"p_error_summary": string,"p_failure_provenance"?: Json,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
+                           },
 "finish_discovery_job":
+{ Args: { "p_error_summary"?: string,"p_job_id": string,"p_status": string }; Returns: undefined
+                           },
+"finish_github_enrichment_job":
 { Args: { "p_error_summary"?: string,"p_job_id": string,"p_status": string }; Returns: undefined
                            },
 "release_discovery_partition":
@@ -625,6 +622,9 @@ isOneToOne: false
                            },
 "start_discovery_job":
 { Args: { "p_partitions": Json,"p_plan_name": string,"p_plan_version": string }; Returns: string
+                           },
+"start_github_enrichment_job":
+{ Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
                            }
           }
           Enums: {
