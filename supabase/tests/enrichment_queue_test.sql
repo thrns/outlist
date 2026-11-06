@@ -7,7 +7,12 @@ select has_column('public', 'repository_candidates', 'enrichment_status', 'enric
 select has_column('public', 'repository_candidates', 'enrichment_lease_token', 'enrichment candidate leases carry fencing tokens');
 select has_column('public', 'repositories', 'source_observed_at', 'canonical repositories retain source observation order');
 select has_column('public', 'source_records', 'etag', 'source provenance retains ETags');
-select has_constraint('public', 'repositories', 'repositories_homepage_url_safe_web', 'canonical homepage values have a database URL constraint');
+select ok(exists (
+  select 1
+  from pg_constraint
+  where conrelid = 'public.repositories'::regclass
+    and conname = 'repositories_homepage_url_safe_web'
+), 'canonical homepage values have a database URL constraint');
 select ok(private.is_safe_http_url('https://docs.example.test/path?source=github#readme'), 'database URL validation accepts an absolute HTTPS URL');
 select ok(private.is_safe_http_url('http://docs.example.test/path'), 'database URL validation accepts an absolute HTTP URL');
 select ok(not private.is_safe_http_url('javascript:alert(1)'), 'database URL validation rejects javascript URLs');
