@@ -186,7 +186,7 @@ async function main() {
   assert(first.status === 0, `The actual enrichment worker must complete against local Supabase; got ${first.status}: ${JSON.stringify(first.errors)}`);
   assert(first.requested[0] === `https://api.github.com/repositories/${providerId}`, "Worker must fetch by stable numeric repository ID first.");
   assert(first.requested.filter((request) => request.includes("/releases")).length === 1, "Release retrieval must stay within its one-page bound.");
-  assert(!first.requested.some((request) => request.includes("page=2")), "The bounded release window must not fetch later pages.");
+  assert(!first.requested.some((request) => new URL(request).searchParams.get("page") === "2"), "The bounded release window must not fetch later pages.");
 
   let repository = await selectOne<Row>(admin.from("repositories").select("*")
     .eq("provider", "github").eq("provider_repository_id", String(providerId)), "First canonical repository row");
