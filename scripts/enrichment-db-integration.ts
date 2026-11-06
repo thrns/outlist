@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "../src/lib/supabase/admin";
 import { createGitHubClient } from "../src/lib/github/client";
+import { normalizeRepositoryEnrichment } from "../src/lib/enrichment/normalize";
 import { runEnrichmentCli, type EnrichmentCliDependencies } from "./enrich";
 import type { Database } from "../src/lib/supabase/database.types";
 
@@ -59,6 +60,10 @@ async function insertCandidate(admin: ReturnType<typeof createSupabaseAdminClien
 function makeGitHubFixture(repositoryId: number, options: {
   observationTime: string;
   variant: "first" | "older" | "newer" | "partial";
+  homepage?: string | null;
+  isPrivate?: boolean;
+  visibility?: string | null;
+  repositoryStatus?: 200 | 404;
 }): { fetch: typeof fetch; requested: string[] } {
   const requested: string[] = [];
   const state = options.variant;
@@ -76,7 +81,7 @@ function makeGitHubFixture(repositoryId: number, options: {
     html_url: `https://github.com/${current.fullName}`,
     url: `https://api.github.com/repos/${current.fullName}`,
     description: `Fixture ${state} repository metadata`,
-    homepage: "https://example.test/outlist-fixture",
+    homepage: options.homepage === undefined ? "https://example.test/outlist-fixture" : options.homepage,
     topics: [current.topic],
     language: current.language,
     stargazers_count: current.stars,
@@ -86,8 +91,8 @@ function makeGitHubFixture(repositoryId: number, options: {
     archived: false,
     disabled: false,
     fork: false,
-    private: false,
-    visibility: "public",
+    private: options.isPrivate ?? false,
+    visibility: options.visibility === undefined ? "public" : options.visibility,
     default_branch: "main",
     created_at: "2024-01-01T00:00:00Z",
     updated_at: options.observationTime,
@@ -116,7 +121,10 @@ function makeGitHubFixture(repositoryId: number, options: {
       "x-github-api-version-selected": "2022-11-28",
     });
     if (requestUrl.pathname === `/repositories/${repositoryId}`) {
-      return new Response(JSON.stringify(repoBody), { status: 200, headers });
+      return new Response(JSON.stringify(options.repositoryStatus === 404 ? { message: "Not Found" } : repoBody), {
+        status: options.repositoryStatus ?? 200,
+        headers,
+      });
     }
     if (requestUrl.pathname.endsWith("/languages")) {
       if (state === "partial") return new Response(JSON.stringify({ message: "fixture server error" }), { status: 503, headers });
@@ -138,7 +146,15 @@ function makeGitHubFixture(repositoryId: number, options: {
 async function runWorker(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   repositoryId: number,
-  options: { observationTime: string; variant: "first" | "older" | "newer" | "partial"; maxReleases?: number },
+  options: {
+    observationTime: string;
+    variant: "first" | "older" | "newer" | "partial";
+    maxReleases?: number;
+    homepage?: string | null;
+    isPrivate?: boolean;
+    visibility?: string | null;
+    repositoryStatus?: 200 | 404;
+  },
 ) {
   const fixture = makeGitHubFixture(repositoryId, options);
   const github = createGitHubClient({
@@ -182,6 +198,8 @@ async function main() {
 
   const projectCountBefore = await admin.from("projects").select("id", { count: "exact", head: true });
   assert(!projectCountBefore.error, "Project count is readable before enrichment.");
+  const initialProjectCount = projectCountBefore.count;
+  assert(typeof initialProjectCount === "number", "Project count is available before enrichment.");
   const first = await runWorker(admin, providerId, { observationTime: "2026-11-05T11:00:00.000Z", variant: "first" });
   assert(first.status === 0, `The actual enrichment worker must complete against local Supabase; got ${first.status}: ${JSON.stringify(first.errors)}`);
   assert(first.requested[0] === `https://api.github.com/repositories/${providerId}`, "Worker must fetch by stable numeric repository ID first.");
@@ -218,7 +236,31 @@ async function main() {
   assert(candidate.enrichment_status === "succeeded" && candidate.repository_id === canonicalId && candidate.enrichment_completed_at, "Candidate must link to its completed canonical repository.");
 
   const projectsAfterEnrichment = await admin.from("projects").select("id", { count: "exact", head: true });
-  assert(projectsAfterEnrichment.count === projectCountBefore.count, "Enrichment must not create or publish projects.");
+  assert(projectsAfterEnrichment.count === initialProjectCount, "Enrichment must not create or publish projects.");
+
+  const httpId = Number(`9800${marker}`);
+  const httpCandidateId = await insertCandidate(admin, String(httpId), `${marker}-http-homepage`);
+  const httpHomepage = await runWorker(admin, httpId, {
+    observationTime: "2026-11-05T11:30:00.000Z", variant: "first", homepage: "http://docs.example.test/outlist",
+  });
+  assert(httpHomepage.status === 0, "A valid absolute HTTP homepage must not prevent enrichment.");
+  const httpRepository = await selectOne<Row>(admin.from("repositories").select("*").eq("provider_repository_id", String(httpId)), "HTTP homepage canonical row");
+  assert(httpRepository.homepage_url === "http://docs.example.test/outlist", "A valid HTTP homepage is persisted unchanged after URL normalization.");
+  const httpCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", httpCandidateId), "HTTP homepage candidate");
+  assert(httpCandidate.enrichment_status === "succeeded", "A valid HTTP homepage candidate succeeds.");
+
+  const unsafeHomepageId = Number(`9801${marker}`);
+  const unsafeHomepageCandidateId = await insertCandidate(admin, String(unsafeHomepageId), `${marker}-unsafe-homepage`);
+  const unsafeHomepage = await runWorker(admin, unsafeHomepageId, {
+    observationTime: "2026-11-05T11:40:00.000Z", variant: "first", homepage: "javascript:alert(1)",
+  });
+  assert(unsafeHomepage.status === 0, "An unsafe homepage must not prevent otherwise valid repository enrichment.");
+  const unsafeRepository = await selectOne<Row>(admin.from("repositories").select("*").eq("provider_repository_id", String(unsafeHomepageId)), "Unsafe homepage canonical row");
+  assert(unsafeRepository.homepage_url === null, "Rejected homepage text is never stored in the canonical homepage column.");
+  assert((unsafeRepository.source_field_states as Row).homepage === "rejected", "The source state records that a present homepage was rejected.");
+  assert(unsafeRepository.description === "Fixture first repository metadata", "Other public metadata remains available when only homepage validation fails.");
+  const unsafeHomepageCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", unsafeHomepageCandidateId), "Unsafe homepage candidate");
+  assert(unsafeHomepageCandidate.enrichment_status === "succeeded", "Unsafe homepage values do not turn an otherwise complete candidate into a failure.");
 
   // Attach the repository to a draft editorial record, then prove enrichment
   // preserves that association and protects fresher canonical data.
@@ -244,6 +286,175 @@ async function main() {
     } as never).eq("id", candidateId);
     assert(!result.error, `Requeue candidate for source freshness check: ${result.error?.message ?? "update failed"}`);
   };
+
+  // An expired fencing token cannot apply an access-restriction state change.
+  await requeue();
+  const staleVisibilityJob = await rpc<string>(rpcClient, "start_github_enrichment_job", { p_resume: false, p_metadata: { fixture: true, stale_visibility: true } });
+  const staleVisibilityClaim = (await rpc<Row[]>(rpcClient, "claim_github_enrichment_candidates", {
+    p_job_id: staleVisibilityJob, p_worker_id: "stale-visibility-worker", p_limit: 1, p_lease_seconds: 60,
+  }))[0];
+  assert(staleVisibilityClaim?.candidate_id === candidateId, "The existing canonical candidate can be claimed for stale visibility fencing.");
+  const staleLease = await admin.from("repository_candidates").update({
+    enrichment_lease_expires_at: new Date(Date.now() - 1000).toISOString(),
+  } as never).eq("id", candidateId);
+  assert(!staleLease.error, "Expire the visibility claim before attempting its restricted-state update.");
+  const staleVisibilityFailure = await rpcClient.rpc("fail_github_repository_enrichment", {
+    p_candidate_id: candidateId,
+    p_worker_id: "stale-visibility-worker",
+    p_lease_token: staleVisibilityClaim.lease_token,
+    p_error_summary: "source_access_restricted",
+    p_retryable: false,
+    p_retry_after_ms: null,
+    p_failure_provenance: {
+      source_url: `https://api.github.com/repositories/${providerId}`,
+      fetched_at: "2026-11-05T11:50:00.000Z",
+      http_status: 200,
+      error_kind: "visibility_restricted",
+      outcome: "access_restricted",
+      visibility_signal: "private_flag",
+    },
+  });
+  assert(staleVisibilityFailure.error?.code === "40001", "A stale worker cannot apply an access-restriction outcome.");
+  repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Canonical state after stale visibility attempt");
+  assert(repository.availability_status === "available" && repository.stars === 100, "A stale visibility outcome cannot alter canonical availability or public metadata.");
+
+  const privateExisting = await runWorker(admin, providerId, {
+    observationTime: "2026-11-05T11:55:00.000Z", variant: "older", isPrivate: true, visibility: "private",
+  });
+  assert(privateExisting.status === 1, "A private response is persisted as a terminal candidate outcome.");
+  assert(privateExisting.requested.length === 1 && privateExisting.requested[0] === `https://api.github.com/repositories/${providerId}`,
+    "A private response is rejected before languages, topics, or releases are fetched.");
+  await rpc<void>(rpcClient, "finish_github_enrichment_job", {
+    p_job_id: staleVisibilityJob, p_status: "partial", p_error_summary: "stale visibility attempt was fenced",
+  });
+  repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Canonical repository after private response");
+  assert(repository.id === canonicalId && repository.project_id === fixtureProject.data.id, "A private response preserves the existing canonical ID and project association.");
+  assert(repository.full_name === "fixture/renamed" && repository.stars === 100 && repository.description === "Fixture first repository metadata",
+    "A private response cannot overwrite previously observed public repository metadata.");
+  assert(repository.availability_status === "access_restricted", "The existing canonical repository records current access restriction.");
+  const privateCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", candidateId), "Private response candidate terminal state");
+  assert(privateCandidate.enrichment_status === "failed" && privateCandidate.enrichment_error === "source_access_restricted",
+    "The candidate receives a durable, safe terminal access-restriction outcome.");
+  const privateOutcome = await admin.from("source_records").select("*").eq("candidate_id", candidateId).eq("http_status", 200)
+    .order("fetched_at", { ascending: false }).limit(1);
+  assert(!privateOutcome.error && privateOutcome.data?.[0]
+    && (privateOutcome.data[0].source_metadata as Row).outcome === "access_restricted"
+    && (privateOutcome.data[0].source_metadata as Row).visibility_signal === "private_flag"
+    && privateOutcome.data[0].raw_payload === null,
+  "Only safe visibility classification and request provenance are stored for a private response.");
+  const projectsAfterRestricted = await admin.from("projects").select("id", { count: "exact", head: true });
+  assert(projectsAfterRestricted.count === initialProjectCount + 1, "Visibility handling does not create additional projects.");
+  const restrictedProject = await selectOne<Row>(admin.from("projects").select("*").eq("id", fixtureProject.data.id), "Project state after private response");
+  assert(restrictedProject.publication_status === "draft" && restrictedProject.license_status === "unknown",
+    "Visibility handling does not publish projects or change editorial license state.");
+
+  await requeue();
+  const unsafeExistingHomepage = await runWorker(admin, providerId, {
+    observationTime: "2026-11-05T12:00:00.000Z", variant: "first", homepage: "javascript:alert(2)",
+  });
+  assert(unsafeExistingHomepage.status === 0, "A rejected homepage on an existing canonical row does not block enrichment.");
+  repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Existing canonical homepage after unsafe observation");
+  assert(repository.homepage_url === "https://example.test/outlist-fixture"
+    && (repository.source_field_states as Row).homepage === "rejected",
+  "A rejected value is not stored, prior safe homepage data remains, and the new source state records rejection.");
+
+  await requeue();
+  const ambiguous404 = await runWorker(admin, providerId, {
+    observationTime: "2026-11-05T12:05:00.000Z", variant: "first", repositoryStatus: 404,
+  });
+  assert(ambiguous404.status === 1, "An ambiguous 404 is recorded as a source failure rather than a successful enrichment.");
+  repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Canonical state after ambiguous GitHub 404");
+  assert(repository.availability_status === "available" && repository.stars === 100,
+    "An ambiguous 404 does not mark an existing repository private, deleted, or unavailable.");
+
+  const privateNewId = Number(`9802${marker}`);
+  const privateNewCandidateId = await insertCandidate(admin, String(privateNewId), `${marker}-private-new`);
+  const privateNew = await runWorker(admin, privateNewId, {
+    observationTime: "2026-11-05T12:05:00.000Z", variant: "first", isPrivate: true, visibility: "public",
+  });
+  assert(privateNew.status === 1, "Contradictory private/public indicators require terminal review handling.");
+  const privateNewRows = await admin.from("repositories").select("id").eq("provider", "github").eq("provider_repository_id", String(privateNewId));
+  assert(!privateNewRows.error && privateNewRows.data?.length === 0, "A private or contradictory response cannot create a canonical repository.");
+  const privateNewCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", privateNewCandidateId), "Private new candidate state");
+  assert(privateNewCandidate.enrichment_status === "failed" && privateNewCandidate.enrichment_error === "source_access_restricted",
+    "A private new candidate is durably terminal without creating a canonical repository.");
+
+  const nonPublicId = Number(`9803${marker}`);
+  const nonPublicCandidateId = await insertCandidate(admin, String(nonPublicId), `${marker}-non-public`);
+  const nonPublic = await runWorker(admin, nonPublicId, {
+    observationTime: "2026-11-05T12:10:00.000Z", variant: "first", isPrivate: false, visibility: "internal",
+  });
+  assert(nonPublic.status === 1, "An explicitly non-public visibility requires terminal review handling.");
+  const nonPublicRows = await admin.from("repositories").select("id").eq("provider", "github").eq("provider_repository_id", String(nonPublicId));
+  assert(!nonPublicRows.error && nonPublicRows.data?.length === 0, "An explicitly internal repository cannot create a canonical row.");
+  const nonPublicCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", nonPublicCandidateId), "Non-public candidate state");
+  assert(nonPublicCandidate.enrichment_status === "failed", "A non-public response leaves a durable terminal candidate state.");
+
+  // Exercise the database boundary directly with otherwise valid payloads.
+  const directGuardId = Number(`9804${marker}`);
+  const directGuardCandidateId = await insertCandidate(admin, String(directGuardId), `${marker}-direct-guard`);
+  const directGuardJob = await rpc<string>(rpcClient, "start_github_enrichment_job", { p_resume: false, p_metadata: { fixture: true, source_guard: true } });
+  const directGuardClaim = (await rpc<Row[]>(rpcClient, "claim_github_enrichment_candidates", {
+    p_job_id: directGuardJob, p_worker_id: "direct-source-guard-worker", p_limit: 1, p_lease_seconds: 60,
+  }))[0];
+  assert(directGuardClaim?.candidate_id === directGuardCandidateId, "The direct RPC fixture receives the expected live lease.");
+  const directFixture = makeGitHubFixture(directGuardId, { observationTime: "2026-11-05T12:15:00.000Z", variant: "first" });
+  const directGithub = createGitHubClient({ fetch: directFixture.fetch, token: null, maxRetries: 0, now: () => Date.parse("2026-11-05T12:15:00.000Z") });
+  const directRepository = await directGithub.getRepositoryById(directGuardId);
+  assert(directRepository.kind === "ok", "Direct RPC fixture repository response must validate.");
+  const [directLanguages, directTopics] = await Promise.all([
+    directGithub.getRepositoryLanguages(directRepository.data.owner.login, directRepository.data.name),
+    directGithub.getRepositoryTopics(directRepository.data.owner.login, directRepository.data.name, { perPage: 100 }),
+  ]);
+  const directReleases = directGithub.iterateRepositoryReleasePages(directRepository.data.owner.login, directRepository.data.name, { perPage: 2, maxPages: 1, maxItems: 2 });
+  const directReleasePage = await directReleases.next();
+  await directReleases.return(undefined);
+  assert(directLanguages.kind === "ok" && directTopics.kind === "ok" && !directReleasePage.done && directReleasePage.value.kind === "ok",
+    "Direct RPC fixture subresources must validate.");
+  const directPayload = normalizeRepositoryEnrichment({
+    expectedRepositoryId: String(directGuardId),
+    repository: directRepository,
+    resources: {
+      languages: directLanguages,
+      topics: directTopics,
+      releases: { kind: "ok", data: directReleasePage.value.data, provenance: directReleasePage.value.provenance },
+    },
+  }) as unknown as Row;
+  const privatePayload = structuredClone(directPayload);
+  (privatePayload.repository as Row).is_private = true;
+  const directPrivate = await rpcClient.rpc("commit_github_repository_enrichment", {
+    p_candidate_id: directGuardCandidateId,
+    p_worker_id: "direct-source-guard-worker",
+    p_lease_token: directGuardClaim.lease_token,
+    p_payload: privatePayload,
+  });
+  assert(directPrivate.error?.code === "22023", "The service-role commit RPC rejects is_private=true at the database boundary.");
+  const unsafeHomepagePayload = structuredClone(directPayload);
+  (unsafeHomepagePayload.repository as Row).homepage = "javascript:alert(1)";
+  const directUnsafeHomepage = await rpcClient.rpc("commit_github_repository_enrichment", {
+    p_candidate_id: directGuardCandidateId,
+    p_worker_id: "direct-source-guard-worker",
+    p_lease_token: directGuardClaim.lease_token,
+    p_payload: unsafeHomepagePayload,
+  });
+  assert(directUnsafeHomepage.error, "The service-role commit RPC cannot bypass the persisted homepage URL constraint.");
+  const directGuardRows = await admin.from("repositories").select("id").eq("provider", "github").eq("provider_repository_id", String(directGuardId));
+  assert(!directGuardRows.error && directGuardRows.data?.length === 0, "Rejected direct RPC payloads leave no canonical row.");
+  const directGuardSources = await admin.from("source_records").select("id").eq("candidate_id", directGuardCandidateId);
+  assert(!directGuardSources.error && directGuardSources.data?.length === 0, "Rejected direct RPC payloads leave no partial provenance.");
+  const directGuardFailure = await rpc<Row>(rpcClient, "fail_github_repository_enrichment", {
+    p_candidate_id: directGuardCandidateId,
+    p_worker_id: "direct-source-guard-worker",
+    p_lease_token: directGuardClaim.lease_token,
+    p_error_summary: "integration fixture database guard completed",
+    p_retryable: false,
+    p_retry_after_ms: null,
+    p_failure_provenance: null,
+  });
+  assert(directGuardFailure.status === "failed", "Direct guard test closes its real durable claim.");
+  await rpc<void>(rpcClient, "finish_github_enrichment_job", {
+    p_job_id: directGuardJob, p_status: "partial", p_error_summary: "integration fixture database guards rejected unsafe payloads",
+  });
   await requeue();
   const older = await runWorker(admin, providerId, { observationTime: "2026-11-05T10:00:00.000Z", variant: "older" });
   assert(older.status === 0, `Older observations should commit idempotently; got ${older.status}: ${JSON.stringify(older.errors)}`);
@@ -408,7 +619,6 @@ async function main() {
   const releasePage = await releasePageIterator.next();
   await releasePageIterator.return(undefined);
   assert(languages.kind === "ok" && topics.kind === "ok" && !releasePage.done && releasePage.value.kind === "ok", "Rollback fixture subresources must validate.");
-  const { normalizeRepositoryEnrichment } = await import("../src/lib/enrichment/normalize");
   const invalidPayload = normalizeRepositoryEnrichment({
     expectedRepositoryId: String(rollbackId),
     repository: rollbackRepo,
@@ -448,8 +658,8 @@ async function main() {
 
   console.log(JSON.stringify({
     event: "enrichment_integration_passed",
-    fixture_candidates: 7,
-    canonical_rows: 2,
+    fixture_candidates: 12,
+    canonical_rows: 4,
     real_supabase: true,
     mocked_github_http: true,
     live_github: false,

@@ -7,6 +7,25 @@ select has_column('public', 'repository_candidates', 'enrichment_status', 'enric
 select has_column('public', 'repository_candidates', 'enrichment_lease_token', 'enrichment candidate leases carry fencing tokens');
 select has_column('public', 'repositories', 'source_observed_at', 'canonical repositories retain source observation order');
 select has_column('public', 'source_records', 'etag', 'source provenance retains ETags');
+select has_constraint('public', 'repositories', 'repositories_homepage_url_safe_web', 'canonical homepage values have a database URL constraint');
+select ok(private.is_safe_http_url('https://docs.example.test/path?source=github#readme'), 'database URL validation accepts an absolute HTTPS URL');
+select ok(private.is_safe_http_url('http://docs.example.test/path'), 'database URL validation accepts an absolute HTTP URL');
+select ok(not private.is_safe_http_url('javascript:alert(1)'), 'database URL validation rejects javascript URLs');
+select ok(not private.is_safe_http_url('data:text/html,unsafe'), 'database URL validation rejects data URLs');
+select ok(not private.is_safe_http_url('https://user:password@example.test/path'), 'database URL validation rejects embedded credentials');
+select ok(not private.is_safe_http_url('https://example.test:99999/path'), 'database URL validation rejects malformed ports');
+select ok(not private.is_safe_http_url('https://example.test/%zz'), 'database URL validation rejects malformed percent escapes');
+select ok(not private.is_safe_http_url('https:///example.test/path'), 'database URL validation rejects a missing authority');
+select throws_ok(
+  $$insert into public.repositories (provider, provider_repository_id, full_name, canonical_url, homepage_url)
+    values ('github', 'pgtap-unsafe-homepage', 'fixture/unsafe-homepage', 'https://github.com/fixture/unsafe-homepage', 'javascript:alert(1)')$$,
+  '23514', null, 'a canonical row cannot store a non-web homepage URL'
+);
+select throws_ok(
+  $$insert into public.repositories (provider, provider_repository_id, full_name, canonical_url, is_private, visibility)
+    values ('github', 'pgtap-private-repository', 'fixture/private-repository', 'https://github.com/fixture/private-repository', true, 'private')$$,
+  '22023', null, 'a direct canonical row insert cannot store private GitHub metadata'
+);
 select ok(has_function_privilege('service_role', 'public.claim_github_enrichment_candidates(uuid,text,integer,integer)', 'EXECUTE'),
   'service role can claim enrichment candidates');
 select ok(not has_function_privilege('anon', 'public.claim_github_enrichment_candidates(uuid,text,integer,integer)', 'EXECUTE'),

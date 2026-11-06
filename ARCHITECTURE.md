@@ -85,6 +85,20 @@ publication remain later work. PostgreSQL owns normalized catalog data and
 the indexed search document; M2-01 will add the public search RPC. Storage
 remains limited to approved logo assets.
 
+Enrichment accepts repository metadata only when GitHub's response indicates
+public visibility. A private flag, explicit non-public visibility, or
+contradictory visibility indicators produce a lease-fenced terminal candidate
+outcome containing only safe classification and request provenance. The
+database rejects private canonical writes. For an existing canonical row, the
+worker may change availability to `access_restricted` while preserving its ID,
+project association, and prior public observations. Ambiguous 404 responses do
+not establish that a repository became private or was deleted. Repository
+homepage values are normalized as absolute HTTP or HTTPS URLs; credentials,
+control characters, malformed values, and non-web schemes are rejected and
+represented with a safe `rejected` source-field state. Homepages are never
+fetched, and an unsafe homepage does not block other repository metadata. A
+previously accepted homepage may remain stored after a newer value is rejected.
+
 The GitHub client reads optional `GITHUB_TOKEN` configuration at construction
 time, sends it only as `Authorization: Bearer`, and uses GitHub REST API
 version `2022-11-28`. It remains in server/Bun code and is not imported by

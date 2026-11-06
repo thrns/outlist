@@ -7,6 +7,7 @@ import type { GitHubRepository } from "../src/lib/github/types";
 import {
   githubFailureToResourceFailure,
   normalizeRepositoryEnrichment,
+  repositoryVisibilitySignal,
   safeFailureSummary,
 } from "../src/lib/enrichment/normalize";
 
@@ -184,6 +185,39 @@ export async function runEnrichmentCli(args: string[], dependencies: EnrichmentC
         });
         if (repositoryResult.kind !== "ok") throw new TypeError("A first-time enrichment cannot reuse a not-modified repository response.");
         const repository = repositoryResult.data;
+
+        const visibilitySignal = repositoryVisibilitySignal(repository);
+        if (visibilitySignal) {
+          stage = "candidate_visibility_commit";
+          const restrictedResult = await invoke("fail_github_repository_enrichment", {
+            p_candidate_id: candidate.candidate_id,
+            p_worker_id: workerId,
+            p_lease_token: candidate.lease_token,
+            p_error_summary: "source_access_restricted",
+            p_retryable: false,
+            p_retry_after_ms: null,
+            p_failure_provenance: {
+              source_url: `https://api.github.com/repositories/${candidate.provider_repository_id}`,
+              fetched_at: repositoryResult.provenance.fetchedAt,
+              http_status: repositoryResult.provenance.httpStatus,
+              error_kind: "visibility_restricted",
+              outcome: "access_restricted",
+              visibility_signal: visibilitySignal,
+            },
+          });
+          const restrictionStatus = readStatus(restrictedResult);
+          if (restrictionStatus === "failed") failed += 1;
+          else if (restrictionStatus === "skipped") skipped += 1;
+          else throw databaseFailure(stage, new Error("invalid response"));
+          operationalErrors += 1;
+          stderr(`${JSON.stringify({
+            event: `candidate_${restrictionStatus}`,
+            candidate_id: candidate.candidate_id,
+            provider_repository_id: candidate.provider_repository_id,
+            message: "source_access_restricted",
+          })}\n`);
+          continue;
+        }
 
         const resources = await fetchResources(github, repository, parsed.maxReleases, controller.signal);
         if (controller.signal.aborted) {

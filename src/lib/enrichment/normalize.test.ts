@@ -180,6 +180,50 @@ describe("repository enrichment normalization", () => {
     });
   });
 
+  it("normalizes only absolute HTTP and HTTPS homepage URLs", () => {
+    const https = normalize(repository({ homepage: { state: "present", value: "https://example.com/docs" } }));
+    const http = normalize(repository({ homepage: { state: "present", value: "http://example.com" } }));
+    expect(https.repository.homepage).toBe("https://example.com/docs");
+    expect(http.repository.homepage).toBe("http://example.com/");
+    expect(https.repository.homepage_state).toEqual({ state: "present" });
+  });
+
+  it.each([
+    "javascript:alert(1)",
+    "data:text/html,unsafe",
+    "file:///etc/passwd",
+    "example.com",
+    "https:",
+    "https://user:password@example.com/path",
+    "https://@example.com/path",
+    "https://example.com:99999/path",
+    "https://example.com:/path",
+    "https://example.com/%zz",
+    "https:///example.com/path",
+    "https://foo_bar.example/path",
+    "https://example.com/a[b]",
+    "https://example.com/a|b",
+    "https://example.com/path\nnext",
+  ])("rejects an unsafe homepage without losing other metadata: %s", (homepage) => {
+    const result = normalize(repository({ homepage: { state: "present", value: homepage } }));
+    expect(result.repository).toMatchObject({
+      homepage: null,
+      homepage_state: { state: "rejected" },
+      source_field_states: { homepage: "rejected" },
+    });
+    expect(result.languages.entries).toHaveLength(2);
+    expect(result.topics.entries).toHaveLength(2);
+    expect(result.releases.entries).toHaveLength(2);
+    expect(result.repository.homepage).not.toBe(homepage);
+  });
+
+  it("rejects private, explicitly non-public, and contradictory GitHub visibility", () => {
+    expect(() => normalize(repository({ isPrivate: true, visibility: { state: "absent" } }))).toThrow(/not safely public/);
+    expect(() => normalize(repository({ isPrivate: false, visibility: { state: "present", value: "internal" } }))).toThrow(/not safely public/);
+    expect(() => normalize(repository({ isPrivate: false, visibility: { state: "present", value: "private" } }))).toThrow(/not safely public/);
+    expect(() => normalize(repository({ isPrivate: true, visibility: { state: "present", value: "public" } }))).toThrow(/not safely public/);
+  });
+
   it("rejects identity substitutions, inconsistent names, and invalid metrics", () => {
     expect(() => normalize(repository({ id: 912346 }))).toThrow(/ID that does not match/);
     expect(() => normalize(repository({ fullName: "other/widget" }))).toThrow(/owner and name/);

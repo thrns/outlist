@@ -11,6 +11,8 @@ import type {
 
 const sourceStateSchema = z.enum(["present", "null", "absent", "unavailable", "unsupported"]);
 const sourceFieldSchema = z.object({ state: sourceStateSchema });
+const homepageStateSchema = z.enum(["present", "null", "absent", "unavailable", "unsupported", "rejected"]);
+const homepageFieldSchema = z.object({ state: homepageStateSchema });
 const normalizedSourceSchema = z.object({
   provider: z.literal("github"),
   record_kind: z.enum(["repository", "languages", "topics", "releases"]),
@@ -34,7 +36,7 @@ const normalizedRepositorySchema = z.object({
   description: z.string().nullable(),
   description_state: sourceFieldSchema,
   homepage: z.string().nullable(),
-  homepage_state: sourceFieldSchema,
+  homepage_state: homepageFieldSchema,
   default_branch: z.string().nullable(),
   default_branch_state: sourceFieldSchema,
   primary_language: z.string().nullable(),
@@ -55,7 +57,7 @@ const normalizedRepositorySchema = z.object({
   pushed_at_state: sourceFieldSchema,
   source_license_metadata: z.record(z.string(), z.unknown()).nullable(),
   license_state: sourceFieldSchema,
-  source_field_states: z.record(z.string(), sourceStateSchema),
+  source_field_states: z.record(z.string(), homepageStateSchema),
   repository_observed_at: z.iso.datetime(),
 });
 
@@ -125,6 +127,20 @@ export interface EnrichmentResourceResults {
 
 export type RepositoryEnrichmentPayload = z.infer<typeof normalizedPayloadSchema>;
 
+export type RepositoryVisibilitySignal = "private_flag" | "non_public_visibility" | "contradictory_visibility";
+
+/** Returns a safe classification when a repository response is not explicitly public. */
+export function repositoryVisibilitySignal(repository: GitHubRepository): RepositoryVisibilitySignal | null {
+  const visibility = repository.visibility.state === "present"
+    ? repository.visibility.value.trim().toLowerCase()
+    : null;
+  if (repository.isPrivate && visibility === "public") return "contradictory_visibility";
+  if (!repository.isPrivate && visibility === "private") return "contradictory_visibility";
+  if (repository.isPrivate) return "private_flag";
+  if (visibility !== null && visibility !== "public") return "non_public_visibility";
+  return null;
+}
+
 export function normalizeRepositoryEnrichment(input: {
   expectedRepositoryId: string;
   repository: GitHubFetchResult<GitHubRepository>;
@@ -135,6 +151,9 @@ export function normalizeRepositoryEnrichment(input: {
   }
 
   const repository = input.repository.data;
+  if (repositoryVisibilitySignal(repository)) {
+    throw new TypeError("GitHub repository visibility is not safely public for enrichment.");
+  }
   const expectedId = parseProviderId(input.expectedRepositoryId);
   if (repository.id !== expectedId || String(repository.id) !== input.expectedRepositoryId) {
     throw new TypeError("GitHub returned a repository ID that does not match the candidate.");
@@ -158,7 +177,11 @@ export function normalizeRepositoryEnrichment(input: {
     pushed_at: repository.pushedAt,
     license: repository.license,
   };
-  const states = Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.state]));
+  const homepage = normalizeHomepage(repository.homepage);
+  const states: Record<string, z.infer<typeof homepageStateSchema>> = Object.fromEntries(
+    Object.entries(fields).map(([key, field]) => [key, field.state]),
+  );
+  states.homepage = homepage.state;
   const license = repository.license.state === "present"
     ? {
         key: repository.license.value.key,
@@ -252,8 +275,8 @@ export function normalizeRepositoryEnrichment(input: {
       canonical_url: repository.canonicalUrl,
       description: fieldValue(repository.description),
       description_state: { state: repository.description.state },
-      homepage: fieldValue(repository.homepage),
-      homepage_state: { state: repository.homepage.state },
+      homepage: homepage.value,
+      homepage_state: { state: homepage.state },
       default_branch: fieldValue(repository.defaultBranch),
       default_branch_state: { state: repository.defaultBranch.state },
       primary_language: fieldValue(repository.primaryLanguage),
@@ -457,6 +480,43 @@ function addFailureSource(
 
 function fieldValue<T>(field: { state: string; value?: T }): T | null {
   return field.state === "present" ? field.value as T : null;
+}
+
+function normalizeHomepage(field: GitHubRepository["homepage"]): { value: string | null; state: "present" | "null" | "absent" | "unavailable" | "unsupported" | "rejected" } {
+  if (field.state !== "present") return { value: null, state: field.state };
+  const normalized = normalizeWebUrl(field.value);
+  return normalized === null
+    ? { value: null, state: "rejected" }
+    : { value: normalized, state: "present" };
+}
+
+function normalizeWebUrl(value: string): string | null {
+  if (value.length === 0 || value !== value.trim() || /[\u0000-\u0020\u007f-\u009f]/u.test(value)
+    || value.includes("\\") || /%(?![0-9a-f]{2})/i.test(value) || !/^https?:\/\//i.test(value)) return null;
+  const authority = value.match(/^https?:\/\/([^/?#]*)/i)?.[1];
+  if (!authority || authority.includes("@") || authority.endsWith(":")) return null;
+  try {
+    const parsed = new URL(value);
+    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      || !parsed.hostname || parsed.username || parsed.password || parsed.href.includes("\\")
+      || !isSafeHomepageHost(parsed.hostname)
+      || /[\[\]|]/u.test(`${parsed.pathname}${parsed.search}${parsed.hash}`)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function isSafeHomepageHost(hostname: string): boolean {
+  if (hostname.length > 253) return false;
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return hostname.includes(":") && /^\[[0-9a-f:.]+\]$/i.test(hostname);
+  }
+  if (/^[0-9.]+$/.test(hostname)) {
+    const octets = hostname.split(".");
+    return octets.length === 4 && octets.every((octet) => /^(0|[1-9][0-9]{0,2})$/.test(octet) && Number(octet) <= 255);
+  }
+  return /^(localhost|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?)$/i.test(hostname);
 }
 
 function isFailure<T extends EnrichmentResourceFailure>(value: unknown): value is T {

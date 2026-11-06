@@ -229,8 +229,8 @@ timestamps, source license evidence, field-presence states, and source
 observation time. Null, absent, and present fields remain distinguishable.
 An older observation cannot replace fresher canonical metadata, and
 `project_id` plus editorial associations are preserved. A 404 is recorded as
-unavailable to that request; it does not prove deletion. Private or
-inaccessible repositories are not inferred from ambiguous responses.
+unavailable to that request; it does not prove deletion or privacy. Explicit
+private or non-public visibility is handled separately below.
 
 Languages store byte counts and normalized keys; topics preserve source
 spelling while deduplicating by case-insensitive normalized key. Membership
@@ -242,7 +242,28 @@ recorded explicitly: validated repository metadata and available complete
 subresources can commit, while failed subresources remain untouched and
 schedule a bounded retry (or a terminal failure for permanent errors).
 Repository metadata by stable ID is mandatory for any successful canonical
-upsert.
+upsert. Only explicitly public responses are eligible: `private: true`, an
+explicit visibility other than `public`, or contradictory private/public
+signals terminate the candidate before language, topic, or release requests.
+The outcome stores only a safe visibility classification and request
+provenance. It never stores response content or creates a canonical row. If a
+canonical repository already exists, the current lease may mark its
+availability `access_restricted`; the repository ID, project association, and
+previously validated public observations remain intact. A later public
+observation can restore `available`. An ambiguous 404 still means only that the
+request could not access the repository and is not treated as proof of
+deletion or privacy.
+
+GitHub homepage values are user-controlled. Enrichment accepts only absolute,
+well-formed HTTP or HTTPS URLs without credentials or control characters,
+stores the URL parser's normalized form, and never fetches the URL. Values with
+other schemes, missing schemes, malformed syntax, or embedded credentials are
+omitted from `homepage_url`; safe source-field state records them as
+`rejected`, distinct from absent or null values. Other valid repository
+metadata continues through enrichment. A previously accepted homepage may be
+retained when a newer value is rejected. A database URL validator and
+canonical write guard enforce the same persistence boundary for direct
+service-role RPC calls.
 
 Each successful or partial commit is one restricted PostgreSQL transaction.
 It verifies the live claim and fencing token, rechecks candidate eligibility,
