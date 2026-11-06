@@ -24,7 +24,7 @@ insert into public.repository_candidates (
   provider, provider_repository_id, full_name, canonical_url, source_record_id,
   queue_status, review_status
 )
-select 'github', fixture.provider_repository_id, fixture.full_name, fixture.canonical_url,
+select 'github', fixture.provider_repository_id, fixture.full_name, 'https://github.com/' || fixture.full_name,
   source.id, fixture.queue_status, fixture.review_status
 from (values
   ('99110001', 'fixture/eligible-a', 'queued', 'unreviewed', 'enrichment-pgtap-eligible-a'),
