@@ -148,18 +148,50 @@ This roadmap separates the current demo from planned platform capabilities.
   GitHub Actions exercises migrations, pgTAP, database lint, type drift, and
   the actual worker orchestration against disposable local Supabase.
 
+## M1-04 — Project classification, license assessment, and review queue (implemented)
+
+- Added deterministic, versioned category mappings against the seeded eleven
+  category taxonomy, with rule-level source evidence, bounded confidence, and
+  no language-only classification or generated descriptions.
+- Pinned SPDX License List metadata at version 3.29.0 and retained OSI
+  approval only as a classification attribute, never as legal verification.
+- Added source-based repository review flags, conservative license outcomes,
+  and a private, policy-versioned assessment queue with independent leases,
+  fencing, bounded retries, and source-observation revisions.
+- Added a narrow transaction that rechecks public eligibility, persists
+  evidence, creates a `pending_review` draft only when category evidence is
+  sufficient, links its repository as primary, associates supported
+  categories, and creates/reuses an editorial review item.
+- Preserved existing project/editorial data, stable repository-ID slugs,
+  service-only assessment mutation, and the existing publication guard.
+- Added dry-run-by-default `bun run assess`, unit tests, pgTAP safeguards, and
+  an actual PostgREST/PostgreSQL worker integration seeded with deterministic
+  GitHub HTTP fixtures. CI runs assessment integration and generated-type
+  parity checks without hosted Supabase or a live GitHub token.
+- Kept all project drafts unpublished and all source-only license and quality
+  assessments unverified.
+
+### Remaining limitations after M1-04
+
+- Partial enrichments wait for a complete successful enrichment before
+  assessment. Custom and compound license expressions require editorial review.
+- Category mappings are deliberately small, deterministic rules. They can
+  return no category or conflicting evidence and never generate descriptions.
+- The assessment CLI is manual and serial. Scheduling, controlled editorial
+  approval, public search, logos, and database-backed frontend integration
+  remain later milestones.
+
 ## Later milestones
 
 - Implement server-side data access and replace browser-only persistence when
   the server and access-control model is ready.
-- Verify source-based project quality and licenses; classify repositories into
-  reviewable Outlist projects and support controlled editorial publication.
+- Add controlled editorial review and publication for source-backed drafts.
 - Add recurring enrichment only after operational limits and quality controls
   are established.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-The local schema, service-only discovery and enrichment queues, and bounded
-workers are implemented. Hosted Supabase deployment, a database-backed
-catalog, production search, and database-backed moderation remain outside the
-current demo.
+The local schema, service-only discovery, enrichment, and assessment queues,
+and bounded workers are implemented. Hosted Supabase deployment, a
+database-backed catalog, production search, and database-backed moderation
+remain outside the current demo.

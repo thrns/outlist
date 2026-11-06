@@ -325,6 +325,58 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"repository_assessment_sources": {
+                  Row: {
+                    "assessment_id": string,"source_record_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "assessment_id": string,"source_record_id": string
+                  }
+                  Update: {
+                    "assessment_id"?: string,"source_record_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "repository_assessment_sources_assessment_id_fkey"
+      columns: ["assessment_id"]
+isOneToOne: false
+      referencedRelation: "repository_assessments"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_assessment_sources_source_record_id_fkey"
+      columns: ["source_record_id"]
+isOneToOne: false
+      referencedRelation: "source_records"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"repository_assessments": {
+                  Row: {
+                    "assessed_at": string | null,"attempts": number,"created_at": string,"id": string,"job_id": string | null,"last_error": string | null,"lease_expires_at": string | null,"lease_token": string | null,"lock_owner": string | null,"locked_at": string | null,"max_attempts": number,"next_attempt_at": string | null,"policy_version": string,"repository_id": string,"result": Json | null,"source_observed_at": string,"status": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "assessed_at"?: string | null,"attempts"?: number,"created_at"?: string,"id"?: string,"job_id"?: string | null,"last_error"?: string | null,"lease_expires_at"?: string | null,"lease_token"?: string | null,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"policy_version": string,"repository_id": string,"result"?: Json | null,"source_observed_at": string,"status"?: string,"updated_at"?: string
+                  }
+                  Update: {
+                    "assessed_at"?: string | null,"attempts"?: number,"created_at"?: string,"id"?: string,"job_id"?: string | null,"last_error"?: string | null,"lease_expires_at"?: string | null,"lease_token"?: string | null,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"policy_version"?: string,"repository_id"?: string,"result"?: Json | null,"source_observed_at"?: string,"status"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "repository_assessments_job_id_fkey"
+      columns: ["job_id"]
+isOneToOne: false
+      referencedRelation: "ingestion_jobs"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_assessments_repository_id_fkey"
+      columns: ["repository_id"]
+isOneToOne: false
+      referencedRelation: "repositories"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"repository_candidate_sources": {
                   Row: {
                     "candidate_id": string,"created_at": string,"discovery_query_id": string,"fetched_at": string,"source_record_id": string
@@ -475,17 +527,23 @@ isOneToOne: false
                   ]
                 },"review_queue": {
                   Row: {
-                    "assigned_to": string | null,"created_at": string,"id": string,"project_alternative_id": string | null,"project_id": string | null,"project_logo_id": string | null,"reason": string,"repository_id": string | null,"resolved_at": string | null,"status": string,"submission_id": string | null,"updated_at": string
+                    "assessment_id": string | null,"assigned_to": string | null,"created_at": string,"id": string,"project_alternative_id": string | null,"project_id": string | null,"project_logo_id": string | null,"reason": string,"repository_id": string | null,"resolved_at": string | null,"status": string,"submission_id": string | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "assigned_to"?: string | null,"created_at"?: string,"id"?: string,"project_alternative_id"?: string | null,"project_id"?: string | null,"project_logo_id"?: string | null,"reason": string,"repository_id"?: string | null,"resolved_at"?: string | null,"status"?: string,"submission_id"?: string | null,"updated_at"?: string
+                    "assessment_id"?: string | null,"assigned_to"?: string | null,"created_at"?: string,"id"?: string,"project_alternative_id"?: string | null,"project_id"?: string | null,"project_logo_id"?: string | null,"reason": string,"repository_id"?: string | null,"resolved_at"?: string | null,"status"?: string,"submission_id"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "assigned_to"?: string | null,"created_at"?: string,"id"?: string,"project_alternative_id"?: string | null,"project_id"?: string | null,"project_logo_id"?: string | null,"reason"?: string,"repository_id"?: string | null,"resolved_at"?: string | null,"status"?: string,"submission_id"?: string | null,"updated_at"?: string
+                    "assessment_id"?: string | null,"assigned_to"?: string | null,"created_at"?: string,"id"?: string,"project_alternative_id"?: string | null,"project_id"?: string | null,"project_logo_id"?: string | null,"reason"?: string,"repository_id"?: string | null,"resolved_at"?: string | null,"status"?: string,"submission_id"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
+      foreignKeyName: "review_queue_assessment_id_fkey"
+      columns: ["assessment_id"]
+isOneToOne: false
+      referencedRelation: "repository_assessments"
+      referencedColumns: ["id"]
+    },{
       foreignKeyName: "review_queue_project_alternative_id_fkey"
       columns: ["project_alternative_id"]
 isOneToOne: false
@@ -599,14 +657,25 @@ isOneToOne: false
               "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string,"provider_repository_id": string
             }[]
                            },
+"claim_github_repository_assessments":
+{ Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
+              "assessment_id": string,"lease_expires_at": string,"lease_token": string,"provider_repository_id": string,"repository_id": string
+            }[]
+                           },
 "commit_discovery_page":
 { Args: { "p_candidates": Json,"p_children"?: Json,"p_fetched_at": string,"p_http_status": number,"p_incomplete_results": boolean,"p_lease_seconds"?: number,"p_lease_token": string,"p_next_state": string,"p_page": number,"p_per_page": number,"p_query_fingerprint": string,"p_query_id": string,"p_source_metadata": Json,"p_source_url": string,"p_total_count": number,"p_worker_id": string }; Returns: Json
                            },
 "commit_github_repository_enrichment":
 { Args: { "p_candidate_id": string,"p_lease_token": string,"p_payload": Json,"p_worker_id": string }; Returns: Json
                            },
+"complete_github_repository_assessment":
+{ Args: { "p_assessment_id": string,"p_lease_token": string,"p_result": Json,"p_source_record_ids": (string)[],"p_worker_id": string }; Returns: Json
+                           },
 "fail_discovery_partition":
 { Args: { "p_error_summary": string,"p_lease_token": string,"p_query_id": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
+                           },
+"fail_github_repository_assessment":
+{ Args: { "p_assessment_id": string,"p_error_summary": string,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
                            },
 "fail_github_repository_enrichment":
 { Args: { "p_candidate_id": string,"p_error_summary": string,"p_failure_provenance"?: Json,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
@@ -617,6 +686,9 @@ isOneToOne: false
 "finish_github_enrichment_job":
 { Args: { "p_error_summary"?: string,"p_job_id": string,"p_status": string }; Returns: undefined
                            },
+"finish_github_repository_assessment_job":
+{ Args: { "p_job_id": string }; Returns: Json
+                           },
 "release_discovery_partition":
 { Args: { "p_lease_token": string,"p_query_id": string,"p_worker_id": string }; Returns: undefined
                            },
@@ -624,6 +696,9 @@ isOneToOne: false
 { Args: { "p_partitions": Json,"p_plan_name": string,"p_plan_version": string }; Returns: string
                            },
 "start_github_enrichment_job":
+{ Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
+                           },
+"start_github_repository_assessment_job":
 { Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
                            }
           }

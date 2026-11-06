@@ -322,6 +322,119 @@ responses, then inspects persisted rows. A live GitHub call is optional and
 is not part of normal CI. The schema migration remains the source of truth;
 CI generates and compares `database.types.ts` from the migrated database.
 
+## M1-04 Repository assessment and project drafts
+
+The standalone `scripts/assess.ts` worker processes repositories that have a
+successful M1-03 enrichment, current valid GitHub identity, `available`
+availability, explicit public visibility, no disabled state, and no associated
+rejected or discarded candidate. It also requires successful provenance for
+the repository, languages, topics, and bounded releases resources. Partial
+enrichment is intentionally not assessed: it stays in the enrichment retry or
+terminal review state until a complete enrichment succeeds. Missing, absent,
+null, unsupported, and unavailable field states remain distinct; none is
+reinterpreted as a complete observation. Discovery checkpoints and enrichment
+leases are not touched by assessment.
+
+### Classification policy
+
+`src/lib/assessment/classify.ts` uses the version `outlist-category-rules-v1`.
+It applies explicit topic and phrase rules to the repository name, usable
+description, and GitHub topics, resolving category IDs only against the active
+seeded taxonomy. Each suggestion stores the evidence value, field, mapping
+rule, explanation, score, and bounded confidence. Close conflicting signals
+and weak evidence do not select a primary category. Languages and their byte
+shares are retained as context but never classify by themselves. No category
+outside the existing eleven is emitted, and no description or product claim is
+generated.
+
+### License evidence
+
+`src/lib/assessment/data/spdx-licenses-3.29.0.json` is the pinned SPDX License
+List 3.29.0 summary snapshot, including the SPDX `isOsiApproved` classification
+and deprecated-ID marker. The worker reads M1-03's validated repository
+license metadata and links it to the source observation; it does not download
+license files or clone repositories. Outcomes distinguish recognized OSI
+licenses, recognized IDs without OSI approval, missing, `NOASSERTION`, unknown
+IDs, compound expressions, conflicting observations, and unavailable evidence.
+GitHub detection does not verify repository terms. OSI approval does not
+convert a project to `verified_open_source`; assessment can only set
+`unknown`, `unverified`, or `needs_review`. A missing detection is not treated
+as proprietary. Compound expressions, custom licenses, exceptions, and
+conflicts need human review.
+
+GitHub's REST license endpoint can return the detected repository license file.
+M1-04 does not call it because repository-level license metadata is already
+available and fetching the file adds no required evidence for this conservative
+classification step. GitHub documents that it attempts identification with
+Licensee and that its information is provided as-is. See the [GitHub license
+API notes](https://docs.github.com/en/rest/licenses/licenses?apiVersion=2022-11-28),
+the [SPDX License List](https://spdx.org/licenses/), and the [OSI approved
+licenses list](https://opensource.org/licenses).
+
+### Quality signals and drafts
+
+`src/lib/assessment/quality.ts` uses `outlist-source-quality-v1` and emits
+structured flags with evidence references and explanations for archived or
+forked repositories, missing descriptions, no observed releases, incomplete
+enrichment, stale or missing timestamps, license uncertainty, and failed
+public-access/identity checks. Archive and fork are review signals; lack of
+stars, youth, and low activity do not imply poor quality. This is source-based
+screening, not a security audit or software-quality certification.
+
+Assessment state is stored in the private `repository_assessments` table and
+normalized `repository_assessment_sources` references. The row is keyed by
+canonical repository and assessment policy, with a source-observation revision
+so a newer successful enrichment can trigger a fresh assessment. Repeating
+the same source observation is idempotent. Database claims use
+`FOR UPDATE SKIP LOCKED`, worker IDs, expiring leases, and fencing tokens;
+failures use bounded retries and persisted next-attempt times. An expired
+final attempt moves to `needs_review`.
+
+`complete_github_repository_assessment` rechecks public eligibility and
+candidate editorial state inside one PostgreSQL transaction. It stores source
+references and result evidence, and if the evidence supports a primary active
+category, creates a deterministic `github-<repository-id>` slug project,
+associates the repository as primary, adds only supported categories, and
+opens/reuses an editorial review item. A repository rename keeps the stable
+numeric ID and project slug. The source repository name and usable description
+are copied as-is; missing descriptions and summaries stay empty. Existing
+project associations are never reset to draft and their names, descriptions,
+categories, overrides, license choices, and visibility are not overwritten.
+Insufficient classification or a slug collision creates a review item for the
+repository without forcing project creation.
+
+Assessment opens or reuses an `open` review item and can attach it to an
+existing `in_review` item. It does not assign, resolve, dismiss, or approve an
+item. Controlled editorial actions and review-queue lifecycle tooling remain
+outside M1-04.
+
+New drafts use `publication_status = pending_review`,
+`quality_status = unreviewed` or `needs_review`, `license_status = unknown`,
+`unverified`, or `needs_review`, `featured = false`, and `published_at = NULL`.
+The database function cannot set publication, quality, or license approval
+fields. Assessment is a server-only Bun command and has no HTTP endpoint.
+
+```bash
+bun run assess -- --dry-run
+bun run assess -- --execute --max-repositories 5
+bun run assess -- --execute --resume --max-repositories 5
+```
+
+Dry-run is the default and performs no database operations. Execution is serial
+and limited to 100 repositories per invocation. It requires the server-only
+Supabase URL and secret key. Output reports assessed, drafted, queued-for-review,
+skipped, retried, and failed counts without source bodies or credentials.
+`--resume` reuses a running assessment job; queued and retry-wait records remain
+durable if the process stops. `bun run test:assessment-db` exercises the actual
+CLI against disposable PostgreSQL/PostgREST, seeded by deterministic GitHub
+HTTP fixtures. CI also runs assessment pgTAP tests, database lint, and generated
+type parity checks without hosted Supabase or a GitHub token.
+
+The stage boundaries are explicit: **discovered candidate ≠ enriched
+repository ≠ assessed project draft ≠ published project**. Assessment does
+not approve licenses, verify quality, apply editorial actions, fetch logos,
+publish projects, or connect the public frontend to Supabase.
+
 Official references: [repository endpoints](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28),
 [languages](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-repository-languages),
 [topics](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#get-all-repository-topics),

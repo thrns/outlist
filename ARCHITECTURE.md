@@ -20,7 +20,9 @@ with repository search and adds a separate, bounded Bun worker that writes
 unreviewed candidates and durable checkpoints to Supabase. The public UI still
 does not use the database. M1-03 adds a separate, restartable GitHub
 enrichment worker that normalizes candidate source metadata into canonical
-repository tables without creating projects.
+repository tables without creating projects. M1-04 adds a private assessment
+worker that turns successfully enriched repositories into explainable
+assessments and pending-review drafts through a single transaction.
 
 ## Intended system
 
@@ -40,6 +42,10 @@ Standalone Bun discovery worker (M1-02)
 Standalone Bun enrichment worker (M1-03)
   └─ candidate lease → GitHub repository ID lookup → validated normalization
        → atomic PostgreSQL repository, subresource, snapshot, and provenance commit
+
+Standalone Bun assessment worker (M1-04)
+  └─ assessment lease → source-backed category/license/quality rules
+       → atomic assessment evidence, draft association, and editorial review queue
 ```
 
 The browser/server clients and database schema are implemented, but the public
@@ -80,8 +86,10 @@ subresource is recorded and scheduled for retry without replacing that
 subresource's prior valid data. Expired claims can be reclaimed; stale workers
 cannot commit. Source ETags are retained but conditional reuse is disabled
 until validated cached response support exists. Enrichment does not write
-`projects`; classification, license and quality verification, and editorial
-publication remain later work. PostgreSQL owns normalized catalog data and
+`projects`; assessment creates only `pending_review` drafts when category
+evidence supports a primary category. License detection remains unverified
+and quality remains unreviewed. Editorial approval and publication remain
+later work. PostgreSQL owns normalized catalog data and
 the indexed search document; M2-01 will add the public search RPC. Storage
 remains limited to approved logo assets.
 
@@ -155,8 +163,9 @@ license verification or publication eligibility.
 Versioned SQL in `supabase/migrations/` is the source of truth for the schema.
 It defines `projects`, `repositories`, normalized categories and tags,
 repository metadata and snapshots, source provenance, logo metadata,
-alternatives, submissions, moderation, administrator allowlisting, and
-restartable ingestion state. The project points to its one primary repository
+alternatives, submissions, moderation, administrator allowlisting, restartable
+ingestion state, and private repository assessments with source-reference rows.
+The project points to its one primary repository
 through a same-project composite foreign key; project/category and project/tag
 relationships are many-to-many. Repository candidates remain separate from
 published projects until curated.
@@ -184,9 +193,9 @@ with `bun run supabase start`, rebuild a clean database with
 and lint with `bun run supabase:db-lint`. Generate types after migrations with
 `bun run supabase:types`. `bun run supabase status` prints local keys and
 `bun run supabase stop` shuts services down. Run
-`bun run test:discovery-db` and `bun run test:enrichment-db` against the
-disposable local database to verify worker orchestration, transaction commits,
-resume behavior, concurrent claims, expired leases, stale-worker fencing,
-retry scheduling, source relationships, and RLS. The enrichment test uses
-deterministic mocked GitHub HTTP responses and inspects actual PostgreSQL rows.
-No hosted project or production credential is required.
+`bun run test:discovery-db`, `bun run test:enrichment-db`, and
+`bun run test:assessment-db` against disposable local Supabase. The assessment
+test executes the real CLI through PostgREST using deterministic GitHub HTTP
+fixtures, then checks draft creation, review queue linkage, idempotency,
+rename handling, editorial preservation, and ordinary-client denial. No
+hosted project or production credential is required.

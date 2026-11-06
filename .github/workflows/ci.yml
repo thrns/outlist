@@ -57,6 +57,13 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
           SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
           bun run test:enrichment-db
+      - name: Exercise assessment transactions and worker against local Supabase
+        run: |
+          eval "$(./node_modules/.bin/supabase status -o env)"
+          NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
+          SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
+          bun run test:assessment-db
       - name: Lint database functions
         run: bun run supabase db lint --schema public,private --fail-on error
       - name: Generate database types from the migrated local database

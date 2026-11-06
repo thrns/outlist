@@ -37,6 +37,7 @@ existing routes.
 | `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
 | `bun run test:discovery-db` | Exercise the discovery queue against disposable local Supabase |
 | `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
+| `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
@@ -44,6 +45,9 @@ existing routes.
 | `bun run enrich -- --dry-run` | Preview enrichment eligibility and limits without database writes |
 | `bun run enrich -- --execute --max-candidates 5 --max-releases 20` | Enrich up to five candidates with server credentials |
 | `bun run enrich -- --execute --resume --max-candidates 5` | Resume a running enrichment job |
+| `bun run assess -- --dry-run` | Preview assessment eligibility without database writes |
+| `bun run assess -- --execute --max-repositories 5` | Assess up to five eligible repositories |
+| `bun run assess -- --execute --resume --max-repositories 5` | Resume durable assessment work |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -74,10 +78,14 @@ partitions. Its bounded discovery CLI persists private, unreviewed candidates
 and checkpoints to Supabase. The separate enrichment CLI fetches by stable
 GitHub repository ID and writes canonical repositories, source provenance,
 languages, topics, releases, and daily snapshots. Candidates, enriched
-repositories, and published projects remain distinct states: enrichment does
-not create projects or verify licenses. `/admin` requires Supabase Auth and a
+repositories, assessed project drafts, and published projects remain distinct
+states. Assessment creates only pending-review drafts and never verifies
+licenses or quality. `/admin` requires Supabase Auth and a
 matching UUID in the private `public.admin_users` allowlist. See
 [ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
+
+The pipeline stages are distinct: **discovered candidate ≠ enriched
+repository ≠ assessed project draft ≠ published project**.
 
 ## Supabase local development
 
@@ -131,6 +139,18 @@ left in a review state. Candidates remain distinct from canonical projects
 and repositories. See [Data pipeline](DATA_PIPELINE.md) for partition and
 recovery details.
 
+Assessment is a separate private worker. It requires current, explicitly
+public canonical metadata and successful enrichment of repository, languages,
+topics, and bounded releases. Partial enrichment remains in retry/review state
+and is not silently assessed. Classification uses deterministic, versioned
+mappings over the seeded 11-category taxonomy; it does not use language alone
+or generate descriptions. License outcomes use the pinned SPDX 3.29.0 list and
+preserve GitHub detection as unverified source evidence. The worker records
+quality flags and creates source-backed drafts in one PostgreSQL transaction,
+with a linked editorial review item. Drafts remain `pending_review`,
+unfeatured, and unpublished. See [Data pipeline](DATA_PIPELINE.md) for rules,
+evidence, retries, and CLI details.
+
 The `project-logos` bucket is public for approved assets, limited to 2 MiB and
 PNG/JPEG/WebP. Public bucket downloads bypass Storage object read policies, so
 only approved and validated files should ever be uploaded. SVG handling is
@@ -169,9 +189,9 @@ to production tables. Hosted Supabase configuration and hosted SMTP delivery
 remain unverified. The search RPC, server-side catalog integration, submission
 endpoint, project publication tools, and recurring discovery remain later
 milestones. GitHub Actions validates the app, rebuilds the local database,
-tests discovery and enrichment queue transactions with deterministic GitHub
-fixtures, and runs isolated Chromium authentication checks without hosted
-credentials.
+tests discovery, enrichment, and assessment queue transactions with
+deterministic GitHub fixtures, and runs isolated Chromium authentication checks
+without hosted credentials.
 
 ## Environment variables
 
