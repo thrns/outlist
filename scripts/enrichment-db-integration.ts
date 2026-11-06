@@ -462,18 +462,18 @@ async function main() {
   assert(repository.full_name === "fixture/renamed" && repository.stars === 100, "Older observations must not replace fresher canonical metadata.");
   assert(repository.project_id === fixtureProject.data.id, "Enrichment must preserve existing project association.");
   const olderSnapshot = await selectOne<Row>(admin.from("repository_snapshots").select("*").eq("repository_id", canonicalId), "Snapshot after older observation");
-  assert(olderSnapshot.stars === 100 && new Date(String(olderSnapshot.captured_at)).toISOString() === "2026-11-05T11:00:00.000Z", "An older same-day snapshot cannot overwrite a newer capture.");
+  assert(olderSnapshot.stars === 100 && new Date(String(olderSnapshot.captured_at)).toISOString() === "2026-11-05T12:00:00.000Z", "An older same-day snapshot cannot overwrite the later public observation used by the homepage safety case.");
   const unchangedLanguages = await admin.from("repository_languages").select("language_key").eq("repository_id", canonicalId);
   assert(!unchangedLanguages.error && unchangedLanguages.data?.some((row) => row.language_key === "typescript"), "An older complete language payload cannot replace a newer observation.");
 
   await requeue();
-  const newer = await runWorker(admin, providerId, { observationTime: "2026-11-05T12:00:00.000Z", variant: "newer" });
+  const newer = await runWorker(admin, providerId, { observationTime: "2026-11-05T12:10:00.000Z", variant: "newer" });
   assert(newer.status === 0, `A later repository transfer observation should upsert; got ${newer.status}: ${JSON.stringify(newer.errors)}`);
   repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Canonical repository after owner transfer");
   assert(repository.full_name === "new-owner/final-name" && repository.owner_login === "new-owner", "A rename and owner transfer must keep the stable repository row.");
   assert(repository.project_id === fixtureProject.data.id, "Later source metadata cannot overwrite editorial project association.");
   const latestSnapshot = await selectOne<Row>(admin.from("repository_snapshots").select("*").eq("repository_id", canonicalId), "Daily snapshot after newer observation");
-  assert(latestSnapshot.stars === 210 && new Date(String(latestSnapshot.captured_at)).toISOString() === "2026-11-05T12:00:00.000Z", "A newer same-day observation updates the single daily snapshot.");
+  assert(latestSnapshot.stars === 210 && new Date(String(latestSnapshot.captured_at)).toISOString() === "2026-11-05T12:10:00.000Z", "A newer same-day observation updates the single daily snapshot.");
   const latestReleases = await admin.from("releases").select("*").eq("repository_id", canonicalId);
   assert(!latestReleases.error && latestReleases.data?.some((row) => row.provider_release_id === String(providerId + 1) && row.version === "v2.0.0"), "Release upsert uses stable provider ID and a newer observation.");
   const fixtureProjectState = await selectOne<Row>(admin.from("projects").select("*").eq("id", fixtureProject.data.id), "Draft project must remain editorially controlled");
