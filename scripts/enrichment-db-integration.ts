@@ -195,6 +195,10 @@ async function main() {
     .in("provider_repository_id", ["880000001", "880000002"]);
   assert(!discoveryFixtures.error, `Isolate discovery integration candidates: ${discoveryFixtures.error?.message ?? "update failed"}`);
   const candidateId = await insertCandidate(admin, String(providerId), marker);
+  // This candidate is intentionally re-enriched across several independent
+  // regression scenarios; keep its fixture budget above the production default.
+  const candidateBudget = await admin.from("repository_candidates").update({ enrichment_max_attempts: 20 } as never).eq("id", candidateId);
+  assert(!candidateBudget.error, `Set the source-safety fixture retry budget: ${candidateBudget.error?.message ?? "update failed"}`);
 
   const projectCountBefore = await admin.from("projects").select("id", { count: "exact", head: true });
   assert(!projectCountBefore.error, "Project count is readable before enrichment.");
