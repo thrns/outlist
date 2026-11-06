@@ -170,6 +170,14 @@ async function main() {
   const marker = randomInt(100_000_000, 999_999_999).toString();
   const providerId = Number(`9811${marker}`);
   assert(Number.isSafeInteger(providerId), "Fixture ID must be a safe numeric GitHub repository ID.");
+  // The discovery integration suite runs first and leaves synthetic candidates
+  // for its cross-page identity assertions. Keep those rows out of this worker
+  // run so the claim is deterministically bound to this suite's mocked source.
+  const discoveryFixtures = await admin.from("repository_candidates")
+    .update({ queue_status: "discarded" } as never)
+    .eq("provider", "github")
+    .in("provider_repository_id", ["880000001", "880000002"]);
+  assert(!discoveryFixtures.error, `Isolate discovery integration candidates: ${discoveryFixtures.error?.message ?? "update failed"}`);
   const candidateId = await insertCandidate(admin, String(providerId), marker);
 
   const projectCountBefore = await admin.from("projects").select("id", { count: "exact", head: true });
