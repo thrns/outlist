@@ -469,8 +469,12 @@ async function main() {
   await requeue();
   const newer = await runWorker(admin, providerId, { observationTime: "2026-11-05T12:10:00.000Z", variant: "newer" });
   assert(newer.status === 0, `A later repository transfer observation should upsert; got ${newer.status}: ${JSON.stringify(newer.errors)}`);
+  const newerCandidate = await selectOne<Row>(admin.from("repository_candidates").select("*").eq("id", candidateId), "Candidate after newer owner-transfer observation");
+  assert(newerCandidate.enrichment_status === "succeeded" && newerCandidate.repository_id === canonicalId,
+    `The owner-transfer worker must complete the intended candidate; observed ${JSON.stringify({ status: newerCandidate.enrichment_status, repository_id: newerCandidate.repository_id })}.`);
   repository = await selectOne<Row>(admin.from("repositories").select("*").eq("id", canonicalId), "Canonical repository after owner transfer");
-  assert(repository.full_name === "new-owner/final-name" && repository.owner_login === "new-owner", "A rename and owner transfer must keep the stable repository row.");
+  assert(repository.full_name === "new-owner/final-name" && repository.owner_login === "new-owner",
+    `A rename and owner transfer must keep the stable repository row; observed ${JSON.stringify({ id: repository.id, full_name: repository.full_name, owner_login: repository.owner_login, source_observed_at: repository.source_observed_at })}.`);
   assert(repository.project_id === fixtureProject.data.id, "Later source metadata cannot overwrite editorial project association.");
   const latestSnapshot = await selectOne<Row>(admin.from("repository_snapshots").select("*").eq("repository_id", canonicalId), "Daily snapshot after newer observation");
   assert(latestSnapshot.stars === 210 && new Date(String(latestSnapshot.captured_at)).toISOString() === "2026-11-05T12:10:00.000Z", "A newer same-day observation updates the single daily snapshot.");
