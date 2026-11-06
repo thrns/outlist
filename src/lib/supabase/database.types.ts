@@ -281,14 +281,14 @@ isOneToOne: false
                   ]
                 },"releases": {
                   Row: {
-                    "created_at": string,"id": string,"is_draft": boolean,"is_prerelease": boolean,"provider_release_id": string,"published_at": string | null,"release_name": string | null,"release_url": string,"repository_id": string,"source_record_id": string | null,"updated_at": string,"version": string
+                    "created_at": string,"id": string,"is_draft": boolean,"is_prerelease": boolean,"provider_release_id": string,"published_at": string | null,"release_name": string | null,"release_url": string,"repository_id": string,"source_observed_at": string | null,"source_record_id": string | null,"updated_at": string,"version": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"is_draft"?: boolean,"is_prerelease"?: boolean,"provider_release_id": string,"published_at"?: string | null,"release_name"?: string | null,"release_url": string,"repository_id": string,"source_record_id"?: string | null,"updated_at"?: string,"version": string
+                    "created_at"?: string,"id"?: string,"is_draft"?: boolean,"is_prerelease"?: boolean,"provider_release_id": string,"published_at"?: string | null,"release_name"?: string | null,"release_url": string,"repository_id": string,"source_observed_at"?: string | null,"source_record_id"?: string | null,"updated_at"?: string,"version": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"is_draft"?: boolean,"is_prerelease"?: boolean,"provider_release_id"?: string,"published_at"?: string | null,"release_name"?: string | null,"release_url"?: string,"repository_id"?: string,"source_record_id"?: string | null,"updated_at"?: string,"version"?: string
+                    "created_at"?: string,"id"?: string,"is_draft"?: boolean,"is_prerelease"?: boolean,"provider_release_id"?: string,"published_at"?: string | null,"release_name"?: string | null,"release_url"?: string,"repository_id"?: string,"source_observed_at"?: string | null,"source_record_id"?: string | null,"updated_at"?: string,"version"?: string
                   }
                   Relationships: [
                     {
@@ -307,14 +307,14 @@ isOneToOne: false
                   ]
                 },"repositories": {
                   Row: {
-                    "availability_status": string,"canonical_url": string,"created_at": string,"default_branch": string | null,"description": string | null,"forks": number,"full_name": string,"id": string,"is_archived": boolean,"is_fork": boolean,"last_successful_sync_at": string | null,"primary_language": string | null,"project_id": string | null,"provider": string,"provider_created_at": string | null,"provider_pushed_at": string | null,"provider_repository_id": string,"provider_updated_at": string | null,"stars": number,"updated_at": string
+                    "availability_status": string,"canonical_url": string,"created_at": string,"default_branch": string | null,"description": string | null,"forks": number,"full_name": string,"homepage_url": string | null,"id": string,"is_archived": boolean,"is_disabled": boolean | null,"is_fork": boolean,"is_private": boolean | null,"last_successful_sync_at": string | null,"open_issues": number | null,"owner_login": string | null,"primary_language": string | null,"project_id": string | null,"provider": string,"provider_created_at": string | null,"provider_node_id": string | null,"provider_pushed_at": string | null,"provider_repository_id": string,"provider_updated_at": string | null,"repository_name": string | null,"source_field_states": NonNullable<Json>,"source_license_metadata": Json | null,"source_observed_at": string | null,"stars": number,"updated_at": string,"visibility": string | null,"watchers": number | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "availability_status"?: string,"canonical_url": string,"created_at"?: string,"default_branch"?: string | null,"description"?: string | null,"forks"?: number,"full_name": string,"id"?: string,"is_archived"?: boolean,"is_fork"?: boolean,"last_successful_sync_at"?: string | null,"primary_language"?: string | null,"project_id"?: string | null,"provider": string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id": string,"provider_updated_at"?: string | null,"stars"?: number,"updated_at"?: string
+                    "availability_status"?: string,"canonical_url": string,"created_at"?: string,"default_branch"?: string | null,"description"?: string | null,"forks"?: number,"full_name": string,"homepage_url"?: string | null,"id"?: string,"is_archived"?: boolean,"is_disabled"?: boolean | null,"is_fork"?: boolean,"is_private"?: boolean | null,"last_successful_sync_at"?: string | null,"open_issues"?: number | null,"owner_login"?: string | null,"primary_language"?: string | null,"project_id"?: string | null,"provider": string,"provider_created_at"?: string | null,"provider_node_id"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id": string,"provider_updated_at"?: string | null,"repository_name"?: string | null,"source_field_states"?: NonNullable<Json>,"source_license_metadata"?: Json | null,"source_observed_at"?: string | null,"stars"?: number,"updated_at"?: string,"visibility"?: string | null,"watchers"?: number | null
                   }
                   Update: {
-                    "availability_status"?: string,"canonical_url"?: string,"created_at"?: string,"default_branch"?: string | null,"description"?: string | null,"forks"?: number,"full_name"?: string,"id"?: string,"is_archived"?: boolean,"is_fork"?: boolean,"last_successful_sync_at"?: string | null,"primary_language"?: string | null,"project_id"?: string | null,"provider"?: string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id"?: string,"provider_updated_at"?: string | null,"stars"?: number,"updated_at"?: string
+                    "availability_status"?: string,"canonical_url"?: string,"created_at"?: string,"default_branch"?: string | null,"description"?: string | null,"forks"?: number,"full_name"?: string,"homepage_url"?: string | null,"id"?: string,"is_archived"?: boolean,"is_disabled"?: boolean | null,"is_fork"?: boolean,"is_private"?: boolean | null,"last_successful_sync_at"?: string | null,"open_issues"?: number | null,"owner_login"?: string | null,"primary_language"?: string | null,"project_id"?: string | null,"provider"?: string,"provider_created_at"?: string | null,"provider_node_id"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id"?: string,"provider_updated_at"?: string | null,"repository_name"?: string | null,"source_field_states"?: NonNullable<Json>,"source_license_metadata"?: Json | null,"source_observed_at"?: string | null,"stars"?: number,"updated_at"?: string,"visibility"?: string | null,"watchers"?: number | null
                   }
                   Relationships: [
                     {
@@ -359,14 +359,14 @@ isOneToOne: false
                   ]
                 },"repository_candidates": {
                   Row: {
-                    "attempts": number,"canonical_url": string,"completed_at": string | null,"created_at": string,"description": string | null,"discovery_query_id": string | null,"first_seen_at": string,"forks": number,"full_name": string,"id": string,"last_error": string | null,"last_seen_at": string,"lock_owner": string | null,"locked_at": string | null,"max_attempts": number,"next_attempt_at": string | null,"owner_login": string | null,"primary_language": string | null,"provider": string,"provider_created_at": string | null,"provider_pushed_at": string | null,"provider_repository_id": string,"provider_updated_at": string | null,"queue_status": string,"repository_id": string | null,"review_status": string,"source_license_summary": Json | null,"source_record_id": string,"stars": number,"topics": (string)[],"updated_at": string
+                    "attempts": number,"canonical_url": string,"completed_at": string | null,"created_at": string,"description": string | null,"discovery_query_id": string | null,"enrichment_attempts": number,"enrichment_completed_at": string | null,"enrichment_error": string | null,"enrichment_job_id": string | null,"enrichment_lease_expires_at": string | null,"enrichment_lease_token": string | null,"enrichment_lock_owner": string | null,"enrichment_locked_at": string | null,"enrichment_max_attempts": number,"enrichment_next_attempt_at": string | null,"enrichment_status": string,"first_seen_at": string,"forks": number,"full_name": string,"id": string,"last_error": string | null,"last_seen_at": string,"lock_owner": string | null,"locked_at": string | null,"max_attempts": number,"next_attempt_at": string | null,"owner_login": string | null,"primary_language": string | null,"provider": string,"provider_created_at": string | null,"provider_pushed_at": string | null,"provider_repository_id": string,"provider_updated_at": string | null,"queue_status": string,"repository_id": string | null,"review_status": string,"source_license_summary": Json | null,"source_record_id": string,"stars": number,"topics": (string)[],"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "attempts"?: number,"canonical_url": string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"first_seen_at"?: string,"forks"?: number,"full_name": string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider": string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id": string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id": string,"stars"?: number,"topics"?: (string)[],"updated_at"?: string
+                    "attempts"?: number,"canonical_url": string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"enrichment_attempts"?: number,"enrichment_completed_at"?: string | null,"enrichment_error"?: string | null,"enrichment_job_id"?: string | null,"enrichment_lease_expires_at"?: string | null,"enrichment_lease_token"?: string | null,"enrichment_lock_owner"?: string | null,"enrichment_locked_at"?: string | null,"enrichment_max_attempts"?: number,"enrichment_next_attempt_at"?: string | null,"enrichment_status"?: string,"first_seen_at"?: string,"forks"?: number,"full_name": string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider": string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id": string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id": string,"stars"?: number,"topics"?: (string)[],"updated_at"?: string
                   }
                   Update: {
-                    "attempts"?: number,"canonical_url"?: string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"first_seen_at"?: string,"forks"?: number,"full_name"?: string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider"?: string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id"?: string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id"?: string,"stars"?: number,"topics"?: (string)[],"updated_at"?: string
+                    "attempts"?: number,"canonical_url"?: string,"completed_at"?: string | null,"created_at"?: string,"description"?: string | null,"discovery_query_id"?: string | null,"enrichment_attempts"?: number,"enrichment_completed_at"?: string | null,"enrichment_error"?: string | null,"enrichment_job_id"?: string | null,"enrichment_lease_expires_at"?: string | null,"enrichment_lease_token"?: string | null,"enrichment_lock_owner"?: string | null,"enrichment_locked_at"?: string | null,"enrichment_max_attempts"?: number,"enrichment_next_attempt_at"?: string | null,"enrichment_status"?: string,"first_seen_at"?: string,"forks"?: number,"full_name"?: string,"id"?: string,"last_error"?: string | null,"last_seen_at"?: string,"lock_owner"?: string | null,"locked_at"?: string | null,"max_attempts"?: number,"next_attempt_at"?: string | null,"owner_login"?: string | null,"primary_language"?: string | null,"provider"?: string,"provider_created_at"?: string | null,"provider_pushed_at"?: string | null,"provider_repository_id"?: string,"provider_updated_at"?: string | null,"queue_status"?: string,"repository_id"?: string | null,"review_status"?: string,"source_license_summary"?: Json | null,"source_record_id"?: string,"stars"?: number,"topics"?: (string)[],"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -380,6 +380,12 @@ isOneToOne: false
       columns: ["repository_id"]
 isOneToOne: true
       referencedRelation: "repositories"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "repository_candidates_enrichment_job_id_fkey"
+      columns: ["enrichment_job_id"]
+isOneToOne: false
+      referencedRelation: "ingestion_jobs"
       referencedColumns: ["id"]
     },{
       foreignKeyName: "repository_candidates_source_record_id_fkey"
@@ -513,14 +519,14 @@ isOneToOne: false
                   ]
                 },"source_records": {
                   Row: {
-                    "created_at": string,"fetched_at": string,"http_status": number | null,"id": string,"provider": string,"raw_payload": Json | null,"record_kind": string,"repository_id": string | null,"reuse_context": string | null,"source_key": string,"source_metadata": NonNullable<Json>,"source_url": string
+                    "candidate_id": string | null,"created_at": string,"etag": string | null,"fetched_at": string,"http_status": number | null,"id": string,"provider": string,"raw_payload": Json | null,"record_kind": string,"repository_id": string | null,"reuse_context": string | null,"source_key": string,"source_metadata": NonNullable<Json>,"source_url": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"fetched_at": string,"http_status"?: number | null,"id"?: string,"provider": string,"raw_payload"?: Json | null,"record_kind": string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key": string,"source_metadata"?: NonNullable<Json>,"source_url": string
+                    "candidate_id"?: string | null,"created_at"?: string,"etag"?: string | null,"fetched_at": string,"http_status"?: number | null,"id"?: string,"provider": string,"raw_payload"?: Json | null,"record_kind": string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key": string,"source_metadata"?: NonNullable<Json>,"source_url": string
                   }
                   Update: {
-                    "created_at"?: string,"fetched_at"?: string,"http_status"?: number | null,"id"?: string,"provider"?: string,"raw_payload"?: Json | null,"record_kind"?: string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key"?: string,"source_metadata"?: NonNullable<Json>,"source_url"?: string
+                    "candidate_id"?: string | null,"created_at"?: string,"etag"?: string | null,"fetched_at"?: string,"http_status"?: number | null,"id"?: string,"provider"?: string,"raw_payload"?: Json | null,"record_kind"?: string,"repository_id"?: string | null,"reuse_context"?: string | null,"source_key"?: string,"source_metadata"?: NonNullable<Json>,"source_url"?: string
                   }
                   Relationships: [
                     {
@@ -528,6 +534,12 @@ isOneToOne: false
       columns: ["repository_id"]
 isOneToOne: false
       referencedRelation: "repositories"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "source_records_candidate_id_fkey"
+      columns: ["candidate_id"]
+isOneToOne: false
+      referencedRelation: "repository_candidates"
       referencedColumns: ["id"]
     }
                   ]
@@ -577,6 +589,23 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
+            "claim_github_enrichment_candidates":
+{ Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
+              "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string | null,"provider_repository_id": string
+            }[]
+                           },
+"commit_github_repository_enrichment":
+{ Args: { "p_candidate_id": string,"p_lease_token": string,"p_payload": Json,"p_worker_id": string }; Returns: Json
+                           },
+"fail_github_repository_enrichment":
+{ Args: { "p_candidate_id": string,"p_error_summary": string,"p_failure_provenance"?: Json | null,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
+                           },
+"finish_github_enrichment_job":
+{ Args: { "p_error_summary"?: string | null,"p_job_id": string,"p_status": string }; Returns: undefined
+                           },
+"start_github_enrichment_job":
+{ Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
+                           },
             "claim_discovery_partitions":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
               "cursor": Json,"id": string,"incomplete_results": boolean,"lease_expires_at": string,"lease_token": string,"partition_key": string,"query_fingerprint": string,"query_parameters": Json,"query_text": string,"total_count": number

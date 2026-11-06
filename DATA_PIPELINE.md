@@ -99,8 +99,9 @@ The CLI validates `owner/name`, displays only selected fields, and never writes
 to Supabase. Ordinary unit tests use mocked HTTP responses and do not need
 network access or a token. The M1-01 adapter retrieved one known repository at
 a time. M1-02 adds bounded repository search and candidate persistence;
-normalization, metric snapshots, scheduled imports, license verification, and
-publication remain later work.
+M1-03 adds canonical normalization, bounded subresource persistence, and
+daily metric snapshots. Scheduled imports, quality and license verification,
+classification, and publication remain later work.
 
 Official references: [repository endpoints](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28),
 [repository search](https://docs.github.com/en/rest/search/search?apiVersion=2022-11-28),
@@ -195,35 +196,117 @@ metadata and review state to `repository_candidates`, compact `source_metadata`
 to `source_records`, and the `repository_candidate_sources` provenance join.
 Atomic queue functions are callable only by `service_role`; operational tables
 remain unavailable to browser roles under RLS and grants. Successful discovery
-creates no `projects` or `repositories` rows. Candidate review, normalization,
-license verification, classification, enrichment, logos, and publication are
-subsequent milestones.
+creates no `projects` or `repositories` rows. Candidate editorial review,
+license verification, classification, logo ingestion, and publication remain
+subsequent milestones; M1-03 handles source normalization and repository
+enrichment without publication.
 
 Queue implementation references: [PostgreSQL row locking and `SKIP LOCKED`](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE),
 [Supabase database function security](https://supabase.com/docs/guides/database/functions#secure-a-database-function),
 and [GitHub Search API limits](https://docs.github.com/en/rest/search/search?apiVersion=2022-11-28).
 
-## Planned enrichment
+## M1-03 GitHub repository enrichment
 
-The later enrichment process is a separate Bun worker with explicit source
-adapters. M1-02 only discovers and queues candidates. Later milestones may:
+Enrichment is a separate, serial Bun worker. It consumes candidates from the
+existing discovery queue but has its own `enrichment_status`, attempts,
+retry time, lease owner, expiry, and random fencing token. Discovery
+partition claims and their page checkpoints are unchanged. Only GitHub
+candidates with a valid numeric provider ID, an eligible discovery queue
+status (`queued` or `retry_wait`), no `discarded` queue status, and a review
+status other than `rejected` may be claimed. Due `retry_wait` and expired
+`processing` claims can be recovered;
+discarded and rejected candidates are never reactivated. Attempts are
+bounded, and exhausted or validation-failed records become terminal for
+investigation.
 
-1. Fetch repository metadata from approved source APIs with rate-limit handling.
-2. Normalize source records into the catalog model and validate them with Zod.
-3. Store permissible response payloads and reuse context in private
-   `source_records`; use Storage only for approved, validated project logos.
-4. Upsert normalized repositories, languages, source topics, releases, and
-   project data into PostgreSQL.
-5. Record metric snapshots by repository and date, job counters, item results,
-   attempts, retry times, and provenance.
-6. Keep discovered `repository_candidates` separate from curated projects.
-   Publication requires verified quality, an explicitly verified
-   open-source license, an available primary repository, and at least one
-   category.
+The worker fetches the full repository by stable numeric ID with
+`getRepositoryById`, then requests languages, topics, and one bounded page of
+recent releases. It validates adapter records with the existing GitHub Zod
+schemas and normalizes them in `src/lib/enrichment/normalize.ts`. The
+repository row is keyed by `(provider, provider_repository_id)` and stores
+the current owner/name, canonical URL, source counts and state, provider
+timestamps, source license evidence, field-presence states, and source
+observation time. Null, absent, and present fields remain distinguishable.
+An older observation cannot replace fresher canonical metadata, and
+`project_id` plus editorial associations are preserved. A 404 is recorded as
+unavailable to that request; it does not prove deletion. Private or
+inaccessible repositories are not inferred from ambiguous responses.
 
-Later runs should be idempotent and observable, and invalid records should not
-replace valid catalog data. M1-02 does not normalize candidates, verify their
-licenses, or publish a listing.
+Languages store byte counts and normalized keys; topics preserve source
+spelling while deduplicating by case-insensitive normalized key. Membership
+is replaced only after a complete, validated response, including a valid
+empty response. Releases upsert by GitHub release ID. The default is at most
+20 recent releases, with a CLI limit up to 100; older releases outside the
+window are not deleted. Failures from languages, topics, or releases are
+recorded explicitly: validated repository metadata and available complete
+subresources can commit, while failed subresources remain untouched and
+schedule a bounded retry (or a terminal failure for permanent errors).
+Repository metadata by stable ID is mandatory for any successful canonical
+upsert.
+
+Each successful or partial commit is one restricted PostgreSQL transaction.
+It verifies the live claim and fencing token, rechecks candidate eligibility,
+upserts the repository and provenance, applies complete language/topic
+observations, upserts bounded releases, records the daily snapshot, links the
+candidate, and updates item/job counters. A transaction failure commits none
+of these effects. The service-role-only claim, commit, fail, and job RPCs use
+row locks and `SKIP LOCKED`; expired leases get a new fencing token so a late
+GitHub response cannot write. Retries persist a delay and safe error summary.
+GitHub rate-limit and `Retry-After` guidance is honored by the adapter; retry
+work is scheduled in PostgreSQL rather than polled in a tight loop.
+
+Snapshots are actual observations only. The snapshot date is derived from
+the repository response capture time (UTC); one row is kept per repository
+per day. A same-day observation replaces counts only when its capture time is
+newer. Repeated runs do not create duplicate daily snapshots or fabricate
+history.
+
+`source_records` stores compact provider/resource kind, API URL, fetch time,
+HTTP status, ETag, API version, safe reuse metadata, candidate, and canonical
+repository relationships. It stores no credentials, arbitrary headers, or
+unbounded response body. Conditional requests are currently disabled for
+enrichment: every fetched resource must be a complete, validated response
+before replacing membership data. ETags are retained as provenance but marked
+non-reusable; a 304 is never treated as an empty response. GitHub's detected
+license stays source evidence and never changes `projects.license_status`.
+
+The worker creates or updates only `repositories`, languages, topics,
+releases, snapshots, provenance, candidates, and ingestion job/item state.
+It never creates or publishes `projects`. Discovered candidates are source
+leads; enriched repositories are normalized source records; published
+projects remain editorially controlled records for a later milestone.
+
+The default command is a no-write dry run. Bounded execution requires
+`--execute` and server-only Supabase credentials; an optional server-side
+`GITHUB_TOKEN` supplies GitHub authentication:
+
+```bash
+GITHUB_TOKEN=... bun run enrich -- --dry-run
+GITHUB_TOKEN=... bun run enrich -- --execute --max-candidates 5 --max-releases 20
+GITHUB_TOKEN=... bun run enrich -- --execute --resume --max-candidates 5
+```
+
+Execution is serial with a 900-second lease, at most 100 candidates and 100
+releases per invocation. `--resume` resumes a running ingestion job. Output
+summarizes claims, successes, retries, failures, and skips without printing
+credentials or raw responses. The CLI is separate from `discover` and has no
+public HTTP endpoint. It reports partial source failures as operational
+failures while retaining validated data and persisted retry state.
+
+The `20261105120000_repository_enrichment.sql` migration adds queue state and
+narrow service-role mutation functions. CI runs pgTAP and
+`bun run test:enrichment-db`, which executes the real worker orchestration
+against local Supabase/PostgreSQL with deterministic mocked GitHub HTTP
+responses, then inspects persisted rows. A live GitHub call is optional and
+is not part of normal CI. The schema migration remains the source of truth;
+CI generates and compares `database.types.ts` from the migrated database.
+
+Official references: [repository endpoints](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28),
+[languages](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-repository-languages),
+[topics](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#get-all-repository-topics),
+[releases](https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28),
+[PostgreSQL row locks and `SKIP LOCKED`](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE),
+and [Supabase database function security](https://supabase.com/docs/guides/database/functions#secure-a-database-function).
 
 ## Database workflow
 
@@ -246,14 +329,17 @@ place for demo compatibility; no sample project is imported into production
 tables.
 
 Run `bun run supabase:db-test` for pgTAP authorization, integrity, transaction,
-checkpoint, incompatible-registration, retry, lease fencing, and RLS tests. CI
-also runs `bun run test:discovery-db` against disposable local Supabase. It
-exercises real PostgreSQL/PostgREST claims and page commits, and runs the actual
-discovery CLI orchestration against deterministic mocked GitHub Search HTTP
-responses. The fixtures cover resume, execution-budget changes, overlapping
-IDs and renames, saturation and date splitting, retry persistence, and the
-absence of canonical writes. These HTTP fixtures do not constitute a successful
-live GitHub crawl or hosted Supabase verification. Run
+checkpoint, incompatible-registration, retry, lease fencing, and RLS tests.
+CI also runs `bun run test:discovery-db` and `bun run test:enrichment-db`
+against disposable local Supabase. The discovery integration exercises the
+discovery CLI and queue; the enrichment integration executes the real
+enrichment CLI orchestration with deterministic mocked GitHub HTTP responses,
+then verifies persisted canonical and related rows. The fixtures cover stable
+IDs across renames, idempotency, complete subresources, bounded releases,
+snapshots, provenance, retries, stale-worker fencing, protected candidates,
+transaction rollback, RLS denial, and no project publication. These HTTP
+fixtures do not constitute a successful live GitHub enrichment or hosted
+Supabase verification. Run
 `bun run supabase:db-lint` for local database linting, and
 `bun run supabase:types` to regenerate `src/lib/supabase/database.types.ts`
 from the local database. CI starts the pinned local Supabase stack on GitHub
@@ -266,8 +352,8 @@ relationships only. Source records, candidate queues, job history,
 submissions, review queue entries, editorial overrides, and administrator
 allowlisting have no client grants or read policies. Direct submission writes
 are disabled pending a validated server endpoint. Administrator authentication
-and the bounded candidate-discovery worker are implemented; enrichment and
-database-backed UI belong to later milestones.
+and the bounded discovery and enrichment workers are implemented;
+database-backed UI belongs to later milestones.
 
 Logo files use a public `project-logos` bucket with a 2 MiB limit and PNG,
 JPEG, and WebP MIME restrictions. Public bucket downloads bypass object RLS,
@@ -279,4 +365,4 @@ only its Postgres metadata does not delete the stored object.
 
 Recurring scheduling, source credential provisioning, logo downloading,
 remote migration deployment, publication workflows, search RPC, and public UI
-integration are outside M1-02.
+integration are outside M1-03.

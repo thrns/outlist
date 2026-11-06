@@ -18,7 +18,9 @@ demonstrations. A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
 unreviewed candidates and durable checkpoints to Supabase. The public UI still
-does not use the database.
+does not use the database. M1-03 adds a separate, restartable GitHub
+enrichment worker that normalizes candidate source metadata into canonical
+repository tables without creating projects.
 
 ## Intended system
 
@@ -35,8 +37,9 @@ Browser
 Standalone Bun discovery worker (M1-02)
   └─ GitHub Search API → validated candidate pages → transactional PostgreSQL queue
 
-Later enrichment worker
-  └─ candidate queue → source adapters → validation/normalization → PostgreSQL + Storage
+Standalone Bun enrichment worker (M1-03)
+  └─ candidate lease → GitHub repository ID lookup → validated normalization
+       → atomic PostgreSQL repository, subresource, snapshot, and provenance commit
 ```
 
 The browser/server clients and database schema are implemented, but the public
@@ -67,9 +70,20 @@ possible; otherwise they are left for review. Candidate rows remain separate
 from canonical projects and repositories. The CI worker integration runs the
 actual CLI orchestration against disposable local Supabase with deterministic
 GitHub HTTP fixtures; it does not verify a live GitHub crawl or hosted Supabase.
-Later milestones will consume candidates. PostgreSQL owns normalized catalog
-data and the indexed search document; M2-01 will add the public search RPC.
-Storage remains limited to approved logo assets.
+The M1-03 enrichment worker claims eligible GitHub candidates through a
+separate queue status, expiring lease, worker ID, and random fencing token.
+It resolves repositories by stable numeric ID, validates source responses,
+and uses the normalization layer before a single transaction persists
+canonical repositories, complete language/topic sets, bounded releases,
+daily snapshots, provenance, candidate links, and job counters. A failed
+subresource is recorded and scheduled for retry without replacing that
+subresource's prior valid data. Expired claims can be reclaimed; stale workers
+cannot commit. Source ETags are retained but conditional reuse is disabled
+until validated cached response support exists. Enrichment does not write
+`projects`; classification, license and quality verification, and editorial
+publication remain later work. PostgreSQL owns normalized catalog data and
+the indexed search document; M2-01 will add the public search RPC. Storage
+remains limited to approved logo assets.
 
 The GitHub client reads optional `GITHUB_TOKEN` configuration at construction
 time, sends it only as `Authorization: Bearer`, and uses GitHub REST API
@@ -143,7 +157,9 @@ approved files. SVG and arbitrary user-controlled object paths are excluded.
 Database types are generated from the migrated local database with the pinned
 Supabase CLI (`bun run supabase:types`) and then consumed by the browser, SSR,
 and privileged client factories. The generated file is checked in CI for
-schema drift.
+schema drift. The enrichment migration adds canonical source fields, compact
+resource provenance, release observation times, and candidate queue state;
+the five mutation RPCs are executable only by `service_role`.
 
 ## Local setup
 
@@ -154,7 +170,9 @@ with `bun run supabase start`, rebuild a clean database with
 and lint with `bun run supabase:db-lint`. Generate types after migrations with
 `bun run supabase:types`. `bun run supabase status` prints local keys and
 `bun run supabase stop` shuts services down. Run
-`bun run test:discovery-db` against the disposable local database to verify
-transactional page commits, resume cursors, concurrent claims, expired leases,
-stale-worker fencing, retry scheduling, and RLS. No hosted project or
-production credential is required.
+`bun run test:discovery-db` and `bun run test:enrichment-db` against the
+disposable local database to verify worker orchestration, transaction commits,
+resume behavior, concurrent claims, expired leases, stale-worker fencing,
+retry scheduling, source relationships, and RLS. The enrichment test uses
+deterministic mocked GitHub HTTP responses and inspects actual PostgreSQL rows.
+No hosted project or production credential is required.

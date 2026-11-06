@@ -36,10 +36,14 @@ existing routes.
 | `bun run test` | Run Vitest tests |
 | `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
 | `bun run test:discovery-db` | Exercise the discovery queue against disposable local Supabase |
+| `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
 | `bun run discover -- --plan initial --execute --max-queries 2 --max-pages 2 --max-candidates 200` | Run a bounded queue collection with server credentials |
+| `bun run enrich -- --dry-run` | Preview enrichment eligibility and limits without database writes |
+| `bun run enrich -- --execute --max-candidates 5 --max-releases 20` | Enrich up to five candidates with server credentials |
+| `bun run enrich -- --execute --resume --max-candidates 5` | Resume a running enrichment job |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -67,8 +71,11 @@ in browser `localStorage`; they are not shared across users or devices. The
 admin controls remain demonstrations and are not connected to a database. A
 separate GitHub adapter can inspect repositories and search approved query
 partitions. Its bounded discovery CLI persists private, unreviewed candidates
-and checkpoints to Supabase; it does not enrich or publish them. `/admin`
-requires Supabase Auth and a
+and checkpoints to Supabase. The separate enrichment CLI fetches by stable
+GitHub repository ID and writes canonical repositories, source provenance,
+languages, topics, releases, and daily snapshots. Candidates, enriched
+repositories, and published projects remain distinct states: enrichment does
+not create projects or verify licenses. `/admin` requires Supabase Auth and a
 matching UUID in the private `public.admin_users` allowlist. See
 [ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
 
@@ -106,9 +113,13 @@ history, submissions, moderation, editorial overrides, and an administrator
 allowlist. It seeds 11 categories and no sample projects. RLS and explicit
 grants expose only published catalog information to anonymous and ordinary
 authenticated users. Those roles cannot read discovery state or write
-projects, submissions, or logo objects. The discovery CLI uses service-only
-transactional database functions; the dashboard does not write to these
-tables.
+projects, submissions, or logo objects. The discovery and enrichment CLIs use
+service-only transactional database functions; the dashboard does not write
+to these tables. Enrichment commits repository metadata and its validated
+relationships atomically. Incomplete language, topic, or release fetches
+preserve prior membership and schedule a retry; source ETags are recorded but
+not reused for conditional requests. Daily snapshots reflect actual capture
+time and update only when the new same-day observation is later.
 
 The `initial` plan has ten topic and language partitions, each bounded by star
 bands and creation dates. It is a bounded sample, not an exhaustive GitHub
@@ -147,7 +158,7 @@ Never put a secret key in a `NEXT_PUBLIC_` variable.
 - [Architecture](ARCHITECTURE.md) describes the current app and intended system boundaries.
 - [Administrator authentication](ADMIN_AUTH.md) documents OTP setup, session
   handling, authorization, and safe administrator provisioning.
-- [Data pipeline](DATA_PIPELINE.md) distinguishes the current static data from planned ingestion.
+- [Data pipeline](DATA_PIPELINE.md) distinguishes candidates, enriched repositories, and published projects.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
 Public demo routes and their localStorage behavior do not query the database.
@@ -156,10 +167,11 @@ per-request UUID allowlist authorization, and real local browser verification
 for the demo admin route; it does not connect moderation or ingestion controls
 to production tables. Hosted Supabase configuration and hosted SMTP delivery
 remain unverified. The search RPC, server-side catalog integration, submission
-endpoint, project publication tools, candidate enrichment, and recurring
-discovery remain later milestones. GitHub Actions validates the app, rebuilds
-the local database, tests queue transactions, and runs isolated Chromium
-authentication checks without hosted credentials.
+endpoint, project publication tools, and recurring discovery remain later
+milestones. GitHub Actions validates the app, rebuilds the local database,
+tests discovery and enrichment queue transactions with deterministic GitHub
+fixtures, and runs isolated Chromium authentication checks without hosted
+credentials.
 
 ## Environment variables
 

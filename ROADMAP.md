@@ -73,8 +73,8 @@ This roadmap separates the current demo from planned platform capabilities.
 ### Remaining limitations after M1-01
 
 - The M1-01 adapter read one explicitly named repository. M1-02 added bounded
-  candidate discovery and restartable Supabase queues; normalization,
-  enrichment, scheduling, quality checks, license verification, and
+  candidate discovery and restartable Supabase queues. M1-03 adds normalization
+  and enrichment; scheduling, quality checks, license verification, and
   publication remain later work.
 - The optional CLI smoke test verifies only the requested repository and
   endpoints; it does not validate the future scheduled ingestion pipeline.
@@ -116,19 +116,50 @@ This roadmap separates the current demo from planned platform capabilities.
   GitHub Actions exercises the queue and actual worker orchestration against
   disposable local Supabase.
 
+## M1-03 — Repository enrichment and normalization (implemented)
+
+- Added a separate candidate enrichment queue with durable attempts, retry
+  schedules, expiring leases, fencing tokens, recovery, and rejected/discarded
+  candidate protection.
+- Fetches current GitHub metadata by stable numeric repository ID and
+  normalizes it into canonical repository rows, complete languages and topics,
+  bounded releases, daily popularity snapshots, and compact source provenance.
+- Uses a restricted transactional PostgreSQL commit RPC for source data,
+  related records, candidate/job state, and counters. Existing project
+  associations and editorial fields are preserved; no project is created.
+- Records source ETags without conditional reuse until a validated reusable
+  cache is implemented. Missing subresources have explicit partial and retry
+  state; 404 responses do not establish deletion.
+- Added a dry-run-by-default bounded CLI, unit tests, pgTAP queue tests, and a
+  real local Supabase integration runner with deterministic GitHub HTTP
+  fixtures. CI runs the enrichment worker integration and regenerated type
+  drift comparison.
+- GitHub's detected license remains source evidence. License verification,
+  quality checks, classification, and editorial publication are later work.
+
+### Remaining limitations after M1-03
+
+- The worker is manually invoked and serial. It does not schedule recurring
+  imports, use conditional requests, or fetch full release history.
+- GitHub API responses can be unavailable or ambiguous. A 404 is not treated
+  as proof of deletion, and no live GitHub or hosted Supabase run is part of
+  normal CI.
+- Local database integration depends on a running Docker-compatible runtime;
+  GitHub Actions exercises migrations, pgTAP, database lint, type drift, and
+  the actual worker orchestration against disposable local Supabase.
+
 ## Later milestones
 
 - Implement server-side data access and replace browser-only persistence when
   the server and access-control model is ready.
-- **M1-03:** Consume queued candidates and normalize verified repository
-  metadata into the canonical database without automatically publishing
-  projects.
-- Build later scheduled enrichment workflows with validation, provenance,
-  idempotency, and operational reporting.
+- Verify source-based project quality and licenses; classify repositories into
+  reviewable Outlist projects and support controlled editorial publication.
+- Add recurring enrichment only after operational limits and quality controls
+  are established.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-The local schema, service-only candidate queue, and bounded discovery worker
-are implemented. Hosted Supabase deployment, a database-backed catalog,
-candidate enrichment, production search, and database-backed moderation remain
-outside the current demo.
+The local schema, service-only discovery and enrichment queues, and bounded
+workers are implemented. Hosted Supabase deployment, a database-backed
+catalog, production search, and database-backed moderation remain outside the
+current demo.
