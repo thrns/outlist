@@ -18,8 +18,11 @@ bun run supabase:types
 Database tests live in `supabase/tests/` and run through pgTAP. The CI database
 job also runs `bun run test:discovery-db` against local Supabase to exercise
 concurrent claims and transactional checkpoints through the service-role API,
-then runs `bun run test:enrichment-db` and `bun run test:assessment-db` against
-real local PostgREST and PostgreSQL using deterministic GitHub HTTP fixtures.
+then runs `bun run test:enrichment-db`, `bun run test:assessment-db`, and
+`bun run test:logos-db` against real local PostgREST, PostgreSQL, and Storage
+using deterministic GitHub HTTP and image fixtures. The logo integration uses
+the actual public Storage service to verify the operator approval path and
+failed-commit cleanup; no hosted credentials are required.
 GitHub Actions rebuilds the database from scratch, reapplies the category seed
 twice to check idempotency, runs tests and lint, and checks generated types for
 drift.

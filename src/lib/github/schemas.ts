@@ -24,6 +24,7 @@ export const githubRepositorySchema = z.object({
     node_id: z.string().min(1),
     login: z.string().min(1),
     type: z.string().optional(),
+    avatar_url: httpsUrl.optional(),
   }),
   html_url: httpsUrl,
   url: httpsUrl,

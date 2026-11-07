@@ -38,6 +38,7 @@ existing routes.
 | `bun run test:discovery-db` | Exercise the discovery queue against disposable local Supabase |
 | `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
 | `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
+| `bun run test:logos-db` | Exercise real logo discovery, approval, and public Storage against local Supabase |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
@@ -48,6 +49,14 @@ existing routes.
 | `bun run assess -- --dry-run` | Preview assessment eligibility without database writes |
 | `bun run assess -- --execute --max-repositories 5` | Assess up to five eligible repositories |
 | `bun run assess -- --execute --resume --max-repositories 5` | Resume durable assessment work |
+| `bun run logos -- --discover --dry-run` | Preview bounded GitHub avatar candidates without database writes |
+| `bun run logos -- --discover --execute --max-projects 10` | Register pending avatar candidates and review items |
+| `bun run logos -- --register-official --execute --project-id <uuid> --source-url <https-url> --attribution <text>` | Register an operator-supplied official logo candidate |
+| `bun run logos -- --approve <logo-id> --avatar-source` | Validate and approve a pending GitHub avatar candidate |
+| `bun run logos -- --approve <logo-id> --local-file <path>` | Validate and approve an official candidate from a local operator file |
+| `bun run logos -- --reject <logo-id> --execute` | Reject a pending candidate |
+| `bun run logos -- --revoke <logo-id> --execute` | Revoke an approved logo and remove its object |
+| `bun run logos -- --reconcile <logo-id>` | Remove a pending orphan or restore an approved object from its reviewed source |
 | `bun run validate:data` | Check sample-data integrity |
 | `bun run check` | Run typecheck, lint, tests, data validation, and build |
 | `bun run supabase <command>` | Run the project-pinned Supabase CLI |
@@ -151,11 +160,26 @@ with a linked editorial review item. Drafts remain `pending_review`,
 unfeatured, and unpublished. See [Data pipeline](DATA_PIPELINE.md) for rules,
 evidence, retries, and CLI details.
 
-The `project-logos` bucket is public for approved assets, limited to 2 MiB and
-PNG/JPEG/WebP. Public bucket downloads bypass Storage object read policies, so
-only approved and validated files should ever be uploaded. SVG handling is
-excluded. Logo URLs, verification, and safe attribution live in
-`project_logos`; the current UI letter fallback remains unchanged.
+Logo resolution prefers an approved official project logo, then an approved
+GitHub owner avatar explicitly labeled as an avatar, then a deterministic
+single-character fallback. Pending, rejected, and revoked assets never resolve
+as images. GitHub discovery reads only the repository owner's avatar URL from
+the stable-ID GitHub API response and creates a pending review item; it does not
+crawl homepages or README images. Official candidates are registered with
+operator attribution and remain pending until an explicit approval command.
+
+The `project-logos` bucket is public and capped at 2 MiB. Public bucket
+downloads can work by direct URL before a metadata RLS row is approved, so no
+candidate bytes are uploaded during discovery. Explicit approval decodes only
+PNG/JPEG/WebP, enforces download and pixel limits, rejects redirects, strips
+metadata, normalizes to WebP, and uploads to a project-scoped UUID path. A
+database approval claim prevents concurrent approvals. Failed upload or commit
+responses use a cleanup claim before removing an object; ambiguous commits that
+actually succeeded preserve the approved asset. `--reconcile` cleans an
+interrupted pending upload or restores an approved object when the reviewed
+source still reproduces its recorded digest. See [Data pipeline](DATA_PIPELINE.md)
+for the trust boundary and remaining limitations. The demo UI keeps its
+existing letter fallback; no public UI redesign is part of M1-05.
 
 ### Real authentication integration checks
 

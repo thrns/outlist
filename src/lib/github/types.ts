@@ -98,7 +98,7 @@ export type GitHubLicenseResult =
 export interface GitHubRepository {
   id: number;
   nodeId: string;
-  owner: { id: number; nodeId: string; login: string; type?: string };
+  owner: { id: number; nodeId: string; login: string; type?: string; avatarUrl?: string };
   name: string;
   fullName: string;
   canonicalUrl: string;

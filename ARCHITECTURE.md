@@ -173,9 +173,13 @@ published projects until curated.
 RLS and column-level grants limit public queries to published projects,
 available associated repositories, active taxonomy, approved logos, and
 approved alternatives. No browser role can write canonical data. The public
-logo bucket accepts PNG, JPEG, and WebP up to 2 MiB. Public bucket URLs bypass
-object read policies, so future server ingestion must validate and upload only
-approved files. SVG and arbitrary user-controlled object paths are excluded.
+logo bucket accepts normalized WebP output up to 2 MiB. Public bucket URLs
+bypass object read policies, so M1-05 uploads only after an explicit trusted
+operator approval. Discovery stores candidate provenance and review metadata
+but no image bytes. Official logos outrank approved GitHub owner avatars;
+avatars remain labeled as avatars. The resolver otherwise returns a
+deterministic letter fallback. SVG and arbitrary user-controlled object paths
+are excluded. Approval RPCs are service-role-only and fence concurrent work.
 
 Database types are generated from the migrated local database with the pinned
 Supabase CLI (`bun run supabase:types`) and then consumed by the browser, SSR,

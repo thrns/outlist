@@ -16,6 +16,7 @@ const repositoryFixture = {
     node_id: "O_kgDOBJQ5nA",
     login: "vercel",
     type: "Organization",
+    avatar_url: "https://avatars.githubusercontent.com/u/14985020?v=4",
   },
   html_url: "https://github.com/vercel/next.js",
   url: "https://api.github.com/repos/vercel/next.js",
@@ -104,7 +105,7 @@ describe("GitHub REST adapter", () => {
     expect(result.data).toMatchObject({
       id: repositoryFixture.id,
       nodeId: repositoryFixture.node_id,
-      owner: { login: "vercel", id: repositoryFixture.owner.id },
+      owner: { login: "vercel", id: repositoryFixture.owner.id, avatarUrl: repositoryFixture.owner.avatar_url },
       fullName: "vercel/next.js",
       canonicalUrl: "https://github.com/vercel/next.js",
       starCount: 100_000,

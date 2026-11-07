@@ -10,8 +10,10 @@ browser. Submission, moderation, and sync actions are local demo behavior.
 The production schema starts with no project listings. The only seeded rows
 are the 11 category taxonomy records. M1-01 adds a read-only GitHub REST API
 adapter. M1-02 adds a bounded repository discovery worker that writes private,
-unreviewed candidates and durable page checkpoints. Neither milestone writes
-canonical projects or repositories.
+unreviewed candidates and durable page checkpoints. M1-03 enriches and
+assesses eligible public repositories into unpublished drafts. M1-05 adds
+reviewed logo candidates without changing publication, license, or quality
+decisions.
 
 ## M1-01 GitHub source adapter
 
@@ -442,6 +444,97 @@ Official references: [repository endpoints](https://docs.github.com/en/rest/repo
 [PostgreSQL row locks and `SKIP LOCKED`](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE),
 and [Supabase database function security](https://supabase.com/docs/guides/database/functions#secure-a-database-function).
 
+## M1-05 Logo candidates, approval, and fallback
+
+`src/lib/logos/resolve.ts` is the reusable typed resolution policy. It uses an
+approved official logo first (`official_site`, `editorial`, or reviewed
+`submitted`), then an approved `provider_avatar`, then a deterministic
+single-character fallback. The provider option is always labeled “GitHub owner
+avatar”; GitHub's organization or user avatar is never presented as the
+project's official product logo. Pending, rejected, revoked, cross-project, or
+invalid-path rows are ignored. The fallback normalizes Unicode with NFKC and
+uses the first letter or number, or `?` for an empty or symbol-only name. It
+does not fetch or create a placeholder image.
+
+### Discovery and provenance
+
+`bun run logos -- --discover --dry-run` previews candidates. Database writes
+require `--execute`, and each invocation is capped at 25 draft projects. The
+worker reads the primary repository by its stable numeric GitHub ID and uses
+only the validated `owner.avatar_url` field in the GitHub API response. It
+excludes repositories that are private, restricted, disabled, or not explicitly
+public. Accepted avatar URLs must use HTTPS on `avatars.githubusercontent.com`
+with the numeric `/u/<owner-id>` path and an optional numeric `v` query.
+Redirects and other hosts are rejected during download.
+
+Discovery stores `origin = provider_avatar`, repository and owner identity,
+source API URL, observation time, API version, source-record reference, and the
+validated avatar URL. Candidate identity includes the repository ID and a
+digest of that URL. Repeated observations reuse the candidate and open review
+item. Discovery never downloads bytes or inserts into Storage. Official image
+candidates can be registered with `--register-official --execute`, an HTTPS
+source URL, and operator-provided attribution; this workflow only records the
+source and does not fetch it. Those candidates remain pending until an operator
+explicitly approves a local file.
+
+### Approval and image trust boundary
+
+The `project-logos` bucket is public. A direct object URL can be readable before
+Postgres RLS would reveal its approval row. Therefore the only automated
+download is inside `bun run logos -- --approve <id> --avatar-source`, after an
+operator names a specific candidate. Official candidates use
+`--approve <id> --local-file <path>` and never fetch their source URL.
+
+Image bytes are capped at 2 MiB on input and read with connect, per-read, and
+total timeouts. Automated fetching is limited to validated GitHub avatar URLs,
+uses HTTPS, rejects credentials and redirects, and has a hard streaming size
+limit. Sharp decodes actual PNG, JPEG, or WebP contents; file extensions and
+`Content-Type` do not establish the format. SVG, HTML, malformed or truncated
+files, animated images, dimensions above 4096 pixels, and decoded images above
+16 million pixels are rejected. Accepted images are orientation-corrected,
+resized within a 512 by 512 box, stripped of metadata, encoded as WebP, capped
+at 1.8 MB, and SHA-256 digested. No arbitrary site crawler, README parser,
+remote redirect follower, or general user-image downloader is present.
+
+Approval first claims a candidate for ten minutes with a database token. The
+CLI then obtains and validates the image, uploads to the existing bucket at
+`<project-uuid>/<logo-uuid>.webp`, and calls a service-role-only RPC that
+rechecks project and repository eligibility, stores the digest and approval
+provenance, selects a primary logo, and resolves the review item atomically.
+Official approval has priority over an avatar and preserves any existing
+approved official primary. A public avatar cannot displace an approved official
+logo. No review action changes project publication, license, or quality status.
+
+Storage and PostgreSQL are separate systems. If upload or commit returns an
+error, a cleanup RPC checks the row under lock and rotates the claim token
+before removing the deterministic object path. If the database actually
+committed, cleanup sees the approved row and leaves its object intact. If
+removal fails, the ten-minute cleanup lease remains as a fence and
+reconciliation can retry after that lease expires. A process interruption
+leaves a pending candidate and an expiring claim. The `--reconcile <id>`
+command removes an orphan for a non-approved candidate, or reuploads
+an approved object only if its reviewed source still reproduces the recorded
+digest. If that source has changed, manual review is required. Revocation clears
+the database path first and then deletes the public object; a failed deletion
+is reported and can be retried with reconciliation.
+
+```bash
+bun run logos -- --discover --dry-run
+bun run logos -- --discover --execute --max-projects 10
+bun run logos -- --register-official --execute --project-id <uuid> --source-url https://example.org/logo.png --attribution "Official project mark"
+bun run logos -- --approve <logo-id> --avatar-source
+bun run logos -- --approve <logo-id> --local-file /path/to/reviewed-logo.png
+bun run logos -- --reject <logo-id> --execute
+bun run logos -- --revoke <logo-id> --execute
+bun run logos -- --reconcile <logo-id>
+```
+
+The current public UI remains local demo data and does not query `project_logos`.
+The resolver is ready for later UI integration; no browser approval API,
+frontend redesign, recurring discovery, automatic publication, or user uploads
+are included. GitHub observations and local Supabase Storage integration use
+deterministic fixtures in CI and need no live GitHub or hosted Supabase account.
+
 ## Database workflow
 
 SQL migrations under `supabase/migrations/` will define the schema and remain
@@ -464,7 +557,8 @@ tables.
 
 Run `bun run supabase:db-test` for pgTAP authorization, integrity, transaction,
 checkpoint, incompatible-registration, retry, lease fencing, and RLS tests.
-CI also runs `bun run test:discovery-db` and `bun run test:enrichment-db`
+CI also runs `bun run test:discovery-db`, `bun run test:enrichment-db`,
+`bun run test:assessment-db`, and `bun run test:logos-db`
 against disposable local Supabase. The discovery integration exercises the
 discovery CLI and queue; the enrichment integration executes the real
 enrichment CLI orchestration with deterministic mocked GitHub HTTP responses,
@@ -490,13 +584,10 @@ and the bounded discovery and enrichment workers are implemented;
 database-backed UI belongs to later milestones.
 
 Logo files use a public `project-logos` bucket with a 2 MiB limit and PNG,
-JPEG, and WebP MIME restrictions. Public bucket downloads bypass object RLS,
-therefore future ingestion must decode and validate the image, strip metadata,
-reject active content and SVG, assign an opaque project-owned path, and upload
-only after editorial approval. Record safe attribution on the approved logo
-metadata. Revocation must remove the object through the Storage API; deleting
-only its Postgres metadata does not delete the stored object.
+JPEG, and WebP input MIME restrictions. M1-05 stores normalized WebP only after
+an explicit trusted operator action, because direct bucket URLs can bypass
+object-read policy checks. Revocation removes the object through the Storage
+API; deleting metadata alone would not delete the object.
 
-Recurring scheduling, source credential provisioning, logo downloading,
-remote migration deployment, publication workflows, search RPC, and public UI
-integration are outside M1-03.
+Recurring scheduling, remote migration deployment, publication workflows,
+search RPC, and public UI integration remain outside these milestones.

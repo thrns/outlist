@@ -178,8 +178,43 @@ This roadmap separates the current demo from planned platform capabilities.
 - Category mappings are deliberately small, deterministic rules. They can
   return no category or conflicting evidence and never generate descriptions.
 - The assessment CLI is manual and serial. Scheduling, controlled editorial
-  approval, public search, logos, and database-backed frontend integration
+  approval, public search, and database-backed frontend integration
   remain later milestones.
+
+## M1-05 — Project logo acquisition, verification, and fallbacks (implemented)
+
+- Added approved-only logo resolution: official project logo, approved GitHub
+  owner avatar labeled as an avatar, then a deterministic Unicode-safe
+  single-character fallback.
+- Extended the GitHub repository adapter with its owner avatar URL and added
+  stable-ID candidate discovery for eligible public repositories.
+- Added immutable source and repository provenance, per-project deduplication,
+  and one open review item per candidate. Discovery defaults to dry-run and
+  never uploads image bytes.
+- Added a trusted operator CLI for official-source registration, explicit
+  avatar or local-file approval, rejection, revocation, and orphan
+  reconciliation. Service-role RPCs fence approvals, enforce eligibility,
+  preserve official-logo priority, and leave publication, license, and quality
+  decisions untouched.
+- Added Sharp-based bounded image decoding and WebP normalization, a migration
+  for logo provenance and approval state, pgTAP permission checks, and a real
+  local Supabase database/Storage integration suite in CI.
+- Documented the public-bucket trust boundary, approval compensation,
+  reconciliation, CLI, resolver policy, and limitations. The demo UI still
+  uses its existing fallback and has no browser moderation or redesign.
+
+### Remaining limitations after M1-05
+
+- Discovery supports GitHub repository owner avatars only. It does not crawl
+  project websites, READMEs, or third-party image hosts.
+- Official candidates must be supplied by a trusted operator as local files;
+  no browser moderation or remote official-logo fetch is available.
+- The public frontend is not database-backed and does not render stored logo
+  assets yet. Discovery and reconciliation are manual, not scheduled.
+- A public bucket object may be briefly visible between explicit approval upload
+  and the approval transaction, because Storage and Postgres cannot commit
+  atomically. Failed transactions trigger fenced cleanup and explicit
+  reconciliation.
 
 ## Later milestones
 
@@ -191,7 +226,7 @@ This roadmap separates the current demo from planned platform capabilities.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-The local schema, service-only discovery, enrichment, and assessment queues,
-and bounded workers are implemented. Hosted Supabase deployment, a
+The local schema, service-only discovery, enrichment, assessment, and logo
+approval workflows are implemented. Hosted Supabase deployment, a
 database-backed catalog, production search, and database-backed moderation
 remain outside the current demo.

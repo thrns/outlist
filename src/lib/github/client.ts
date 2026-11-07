@@ -707,6 +707,7 @@ function toRepository(payload: GitHubRepositoryPayload): GitHubRepository {
       nodeId: payload.owner.node_id,
       login: payload.owner.login,
       ...(payload.owner.type ? { type: payload.owner.type } : {}),
+      ...(payload.owner.avatar_url ? { avatarUrl: payload.owner.avatar_url } : {}),
     },
     name: payload.name,
     fullName: payload.full_name,
