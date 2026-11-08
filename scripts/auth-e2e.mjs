@@ -43,8 +43,6 @@ let stackStartAttempted = false;
 let nextServer;
 let nextServerLogs = "";
 let adminClient;
-const createdUserIds = [];
-let temporaryEmails;
 const sensitiveValues = [];
 
 function run(command, args, options = {}) {
@@ -120,7 +118,6 @@ async function createTemporaryUsers(identities) {
     if (error || !data.user) {
       throw new Error("Could not provision the disposable local Auth users");
     }
-    createdUserIds.push(data.user.id);
     result[name] = { email, userId: data.user.id };
   }
 
@@ -130,6 +127,103 @@ async function createTemporaryUsers(identities) {
   );
   if (error) throw new Error("Could not seed the disposable admin allowlist");
   return result;
+}
+
+async function createEditorialFixture() {
+  const projectId = randomUUID();
+  const repositoryId = randomUUID();
+  const providerRepositoryId = BigInt(`0x${randomUUID().replaceAll("-", "").slice(0, 14)}`).toString();
+  const slug = `auth-e2e-${projectId.replaceAll("-", "").slice(0, 18)}`;
+  const projectName = "Auth E2E Editorial Fixture";
+  const observedAt = new Date(Date.now() - 30_000).toISOString();
+  const { data: category, error: categoryError } = await adminClient
+    .from("categories")
+    .select("id")
+    .eq("slug", "developer-tools")
+    .single();
+  if (categoryError || !category) throw new Error("Could not find the seeded category for the editorial E2E fixture");
+  const { error: projectError } = await adminClient.from("projects").insert({
+    id: projectId,
+    slug,
+    name: projectName,
+    summary: "A real Supabase-backed draft for authenticated editorial review.",
+    description: "This fixture exists only in the disposable local Auth E2E database.",
+    publication_status: "pending_review",
+    license_status: "unverified",
+    quality_status: "unreviewed",
+  });
+  if (projectError) throw new Error("Could not create the editorial E2E project fixture");
+  const { error: repositoryError } = await adminClient.from("repositories").insert({
+    id: repositoryId,
+    project_id: projectId,
+    provider: "github",
+    provider_repository_id: providerRepositoryId,
+    full_name: "outlist-e2e/editorial-fixture",
+    canonical_url: "https://github.com/outlist-e2e/editorial-fixture",
+    owner_login: "outlist-e2e",
+    repository_name: "editorial-fixture",
+    availability_status: "available",
+    is_private: false,
+    visibility: "public",
+    is_disabled: false,
+    source_observed_at: observedAt,
+    last_successful_sync_at: observedAt,
+    source_field_states: { visibility: "present", license: "present", description: "present", topics: "present", languages: "present", releases: "present" },
+    source_license_metadata: { detected_spdx_id: "NOASSERTION" },
+  });
+  if (repositoryError) throw new Error("Could not create the editorial E2E repository fixture");
+  const { error: primaryError } = await adminClient.from("projects").update({ primary_repository_id: repositoryId }).eq("id", projectId);
+  if (primaryError) throw new Error("Could not attach the editorial E2E primary repository");
+  const { error: categoryLinkError } = await adminClient.from("project_categories").insert({ project_id: projectId, category_id: category.id });
+  if (categoryLinkError) throw new Error("Could not classify the editorial E2E project fixture");
+  const sourceIds = {};
+  for (const kind of ["repository", "topics", "languages", "releases"]) {
+    const sourceId = randomUUID();
+    const { error: sourceError } = await adminClient.from("source_records").insert({
+      id: sourceId,
+      provider: "github",
+      record_kind: kind,
+      source_key: `${providerRepositoryId}:${kind}:auth-e2e`,
+      source_url: "https://api.github.com/repos/outlist-e2e/editorial-fixture",
+      fetched_at: observedAt,
+      http_status: 200,
+      repository_id: repositoryId,
+      source_metadata: { validated: true, api_version: "2022-11-28", resource_kind: kind, stable_provider_id: providerRepositoryId },
+    });
+    if (sourceError) throw new Error(`Could not create the editorial E2E ${kind} source record`);
+    sourceIds[kind] = sourceId;
+  }
+  const { error: topicError } = await adminClient.from("repository_topics").insert({ repository_id: repositoryId, source_topic: "editorial-review", source_record_id: sourceIds.topics, observed_at: observedAt });
+  if (topicError) throw new Error("Could not create the editorial E2E topic evidence");
+  const { error: languageError } = await adminClient.from("repository_languages").insert({ repository_id: repositoryId, language_name: "TypeScript", bytes: 1500, measured_at: observedAt, source_record_id: sourceIds.languages });
+  if (languageError) throw new Error("Could not create the editorial E2E language evidence");
+  const { error: releaseError } = await adminClient.from("releases").insert({ repository_id: repositoryId, provider_release_id: "e2e-release-1", version: "v1.0.0", release_name: "E2E release", release_url: "https://github.com/outlist-e2e/editorial-fixture/releases/tag/v1.0.0", published_at: observedAt, source_record_id: sourceIds.releases });
+  if (releaseError) throw new Error("Could not create the editorial E2E release evidence");
+  const assessmentId = randomUUID();
+  const { error: assessmentError } = await adminClient.from("repository_assessments").insert({
+    id: assessmentId,
+    repository_id: repositoryId,
+    policy_version: "m1-04-assessment-v1",
+    source_observed_at: observedAt,
+    status: "assessed",
+    assessed_at: observedAt,
+    result: {
+      classification: { status: "classified", primaryCategoryId: category.id, suggestions: [{ categoryId: category.id, score: 1, evidence: ["repository topic: editorial-review"] }] },
+      license: { policyVersion: "outlist-license-evidence-v1", status: "conflicting_evidence", identifier: null, projectLicenseStatus: "needs_review", evidence: [], explanation: "GitHub license evidence remains uncertain for review.", requiresReview: true },
+      quality: { policyVersion: "outlist-source-quality-v1", status: "eligible_for_review", priority: "normal", qualityStatus: "needs_review", flags: [{ code: "license_uncertain", severity: "review", evidence: ["source_license_metadata"], explanation: "License evidence needs human review." }] },
+    },
+  });
+  if (assessmentError) throw new Error("Could not create the editorial E2E assessment");
+  const { error: assessmentSourceError } = await adminClient.from("repository_assessment_sources").insert(Object.values(sourceIds).map((sourceRecordId) => ({ assessment_id: assessmentId, source_record_id: sourceRecordId })));
+  if (assessmentSourceError) throw new Error("Could not link editorial E2E assessment source evidence");
+  const { error: queueError } = await adminClient.from("review_queue").insert({
+    project_id: projectId,
+    assessment_id: assessmentId,
+    reason: "Auth E2E draft requires actual database-backed review.",
+    status: "open",
+  });
+  if (queueError) throw new Error("Could not queue the editorial E2E project fixture");
+  return { projectId, projectName };
 }
 
 async function ensureNoClientSecret(directory, secretKey) {
@@ -143,32 +237,6 @@ async function ensureNoClientSecret(directory, secretKey) {
       if (content.includes(Buffer.from(secretKey))) {
         throw new Error("The privileged key was included in a client asset");
       }
-    }
-  }
-}
-
-async function cleanupUsers(identities) {
-  if (!adminClient) return;
-  if (createdUserIds.length > 0) {
-    const { error } = await adminClient
-      .from("admin_users")
-      .delete()
-      .in("user_id", createdUserIds);
-    if (error) throw new Error("Could not remove temporary admin allowlist rows");
-  }
-  for (const userId of createdUserIds) {
-    const { error } = await adminClient.auth.admin.deleteUser(userId);
-    if (error) throw new Error("Could not remove temporary local Auth users");
-  }
-  const mailpitUrl = process.env.AUTH_E2E_MAILPIT_URL;
-  if (mailpitUrl && identities) {
-    for (const email of Object.values(identities)) {
-      const query = new URLSearchParams({ query: `to:${email}` });
-      const response = await fetch(`${mailpitUrl}/api/v1/search?${query}`, {
-        method: "DELETE",
-        signal: AbortSignal.timeout(3_000),
-      });
-      if (!response.ok) throw new Error("Could not remove temporary Mailpit messages");
     }
   }
 }
@@ -324,7 +392,6 @@ async function main() {
       `e2e-${runId}-${name.toLowerCase()}@example.com`,
     ]),
   );
-  temporaryEmails = emails;
   const appEnv = {
     ...cliEnv,
     NODE_ENV: "production",
@@ -357,6 +424,8 @@ async function main() {
     ...Object.values(users).flatMap(({ email, userId }) => [email, userId]),
   );
   appEnv.AUTH_E2E_USERS = JSON.stringify(users);
+  const editorialFixture = await createEditorialFixture();
+  appEnv.AUTH_E2E_PROJECT_FIXTURE = JSON.stringify(editorialFixture);
 
   stage = "building the production Next.js application";
   await requireSuccess(process.execPath, ["run", "build"], appEnv, "Next.js build");
@@ -403,10 +472,9 @@ try {
   process.exitCode = 1;
 } finally {
   await stopNextServer();
+  // Auth E2E runs in a disposable local project and writes append-only audit
+  // rows. Stop without a backup to discard its users, fixtures, and Mailpit mail.
   let cleanupFailed = false;
-  await cleanupUsers(temporaryEmails).catch(() => {
-    cleanupFailed = true;
-  });
   if (stackStartAttempted) {
     const stopResult = await run(supabaseCli, ["stop", "--no-backup"], {
       env: {

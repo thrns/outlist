@@ -6,6 +6,12 @@ export const LICENSE_POLICY_VERSION = "outlist-license-evidence-v1" as const;
 const licenseIds = new Map(spdxSnapshot.licenses.map((license) => [license.licenseId, {
   name: license.name, osiApproved: license.isOsiApproved === true, deprecated: license.isDeprecatedLicenseId,
 }]));
+
+/** Returns true only for a current, recognized SPDX identifier on the pinned OSI-approved list. */
+export function isKnownOsiApprovedLicense(identifier: string): boolean {
+  const license = licenseIds.get(identifier);
+  return license?.osiApproved === true && license.deprecated !== true;
+}
 const observationSchema = z.object({
   value: z.string().max(128).nullable(),
   state: z.enum(["present", "null", "absent", "unavailable", "unsupported"]),

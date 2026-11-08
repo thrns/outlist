@@ -1,33 +1,108 @@
-"use client";
-import {useState} from "react";
 import Link from "next/link";
-import {toast} from "sonner";
-import {useDirectory} from "@/context/directory-provider";
-import {categoryById,categories,formatCount,type Project,type Submission} from "@/data/catalog";
-import {Breadcrumb} from "@/components/layout/breadcrumb";
-import {ProjectLogo} from "@/components/project/project-logo";
-import {Glyph} from "@/components/project/glyph";
-import {Button} from "@/components/ui/button";
-import {Badge} from "@/components/ui/badge";
-import {EmptyState} from "@/components/ui/empty-state";
-import {logoutAdmin} from "@/app/admin/actions";
-type AdminTab="pending"|"projects"|"ingestion";
-export function AdminPage(){
-  const {projects,visibleProjects,submissions,approve,reject,toggleFeature,toggleVisibility,sync,syncRuns,lastSync}=useDirectory();
-  const [tab,setTab]=useState<AdminTab>("pending");
-  const pending=submissions.filter(p=>p.status==="pending");const approved=submissions.filter(p=>p.status==="approved").length;
-  const tabs:{id:AdminTab;label:string;count?:number}[]=[{id:"pending",label:"Pending reviews",count:pending.length},{id:"projects",label:"Project directory",count:visibleProjects.length},{id:"ingestion",label:"Ingestion status"}];
-  function approveItem(p:Submission){approve(p.id);toast.success(`${p.name} approved and listed`);}
-  function rejectItem(p:Submission){reject(p.id);toast.success(`${p.name} rejected from the queue`);}
-  function featureItem(p:Project){toggleFeature(p.id);toast.success(`${p.name} ${p.featured?"unfeatured":"featured"}`);}
-  function visibilityItem(p:Project){toggleVisibility(p.id);toast.success(`${p.name} ${p.visible?"unlisted":"restored"}`);}
-  return <main className="container page"><Breadcrumb items={[{label:"Outlist",href:"/"},{label:"Internal admin"}]}/><div className="page-head" style={{marginTop:14}}><div><div className="eyebrow muted">Internal workspace · Local demo</div><h1 className="page-title">Directory administration</h1><p className="muted" style={{margin:0}}>Review submissions, manage listings and monitor the mock import pipeline.</p></div><div className="flex gap-2 flex-wrap"><Button asChild variant="outline"><Link href="/explore">View public directory <Glyph name="external" size="sm"/></Link></Button><form action={logoutAdmin}><Button type="submit" variant="outline">Sign out</Button></form></div></div>
-    <div className="alert-inline" role="note"><strong>Local demo only:</strong> project approvals, featured or visibility changes, and synchronization controls update this browser’s localStorage only. They do not change production database records or trigger repository imports.</div>
-    <div className="admin-stats"><div className="metric"><span className="muted small">Listed projects</span><strong>{visibleProjects.length}</strong><span className="fine muted">Across {categories.length} categories</span></div><div className="metric"><span className="muted small">Pending review</span><strong>{pending.length}</strong><Badge variant="dot">Needs attention</Badge></div><div className="metric"><span className="muted small">Approved submissions</span><strong>{approved}</strong><span className="fine muted">Stored in this browser</span></div><div className="metric"><span className="muted small">Import health</span><strong style={{fontSize:22,margin:"13px 0 9px"}}>Operational</strong><Badge variant="dot">Demo pipeline</Badge></div></div>
-    <div className="admin-tabs" role="tablist" aria-label="Admin views">{tabs.map(x=><button key={x.id} type="button" className={`admin-tab ${tab===x.id?"active":""}`} role="tab" aria-selected={tab===x.id} aria-controls={`admin-panel-${x.id}`} id={`admin-tab-${x.id}`} onClick={()=>setTab(x.id)}>{x.label} {x.count!==undefined&&<Badge>{x.count}</Badge>}</button>)}</div>
-    <div role="tabpanel" id={`admin-panel-${tab}`} aria-labelledby={`admin-tab-${tab}`}>
-      {tab==="pending"&&<><div className="section-head"><div><h2 className="section-title" style={{fontSize:18}}>Review queue</h2><p className="section-subtitle">Approve to add to the directory, or reject to remove from the queue.</p></div></div>{pending.length?<div className="table-scroll"><table className="data-table"><thead><tr><th>Project</th><th>Category</th><th>Submitted</th><th>Status</th><th style={{textAlign:"right"}}>Actions</th></tr></thead><tbody>{pending.map(p=><tr key={p.id}><td><div className="project-identity"><ProjectLogo project={p} size="sm"/><div><strong>{p.name}</strong><div className="fine muted mono">{p.repo}</div><div className="fine muted">{p.description}</div></div></div></td><td>{categoryById(p.category)?.name}</td><td>{p.created}</td><td><Badge variant="dot">Pending</Badge></td><td><div className="table-actions"><Button size="sm" onClick={()=>approveItem(p)}><Glyph name="check" size="sm"/> Approve</Button><Button size="sm" variant="outline" onClick={()=>rejectItem(p)}>Reject</Button></div></td></tr>)}</tbody></table></div>:<EmptyState icon={<Glyph name="circlecheck" size="lg"/>} title="You're all caught up" description="No submissions are waiting for review."><Button asChild variant="outline"><Link href="/submit">Submit a test project</Link></Button></EmptyState>}</>}
-      {tab==="projects"&&<><div className="section-head"><div><h2 className="section-title" style={{fontSize:18}}>Manage directory</h2><p className="section-subtitle">Feature or unlist projects in this browser-local demo.</p></div><span className="fine muted">{projects.length} total records</span></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Project</th><th>Category</th><th>Stars</th><th>Status</th><th style={{textAlign:"right"}}>Actions</th></tr></thead><tbody>{projects.map(p=><tr key={p.id}><td><div className="project-identity"><ProjectLogo project={p} size="sm"/><Link href={`/project/${p.id}`}><strong>{p.name}</strong><div className="fine muted mono">{p.repo}</div></Link></div></td><td>{categoryById(p.category)?.name}</td><td>{formatCount(p.stars)}</td><td><Badge variant={p.visible?"dot":"default"}>{p.visible?"Listed":"Unlisted"}</Badge></td><td><div className="table-actions"><Button variant="outline" size="sm" onClick={()=>featureItem(p)}>{p.featured?"Unfeature":"Feature"}</Button><Button variant="outline" size="sm" onClick={()=>visibilityItem(p)}>{p.visible?"Unlist":"Restore"}</Button></div></td></tr>)}</tbody></table></div></>}
-      {tab==="ingestion"&&<><div className="section-head"><div><h2 className="section-title" style={{fontSize:18}}>Repository ingestion</h2><p className="section-subtitle">Illustrative GitHub metadata imports and synchronization logs.</p></div><Button onClick={()=>{sync();toast.success("Mock synchronization completed");}}><Glyph name="refresh"/> Run mock sync</Button></div><div className="surface" style={{padding:22,marginBottom:20}}><div className="flex justify-between gap-4 flex-wrap"><div><strong style={{fontSize:15}}>GitHub metadata import</strong><div className="small muted" style={{marginTop:3}}>Repository stars, languages, licenses and recent updates</div></div><Badge variant="dot">Healthy</Badge></div><div className="line" style={{margin:"17px 0"}}/><div className="small"><span className="muted">Last completed:</span> {lastSync} <span className="muted" style={{marginLeft:15}}>Imported:</span> {projects.length} records</div></div><div className="surface" style={{padding:"10px 20px"}}><div className="log-item"><Glyph name="circlecheck"/><div className="grow"><strong>Directory index ready</strong><p>{projects.length} project records available to discovery</p></div><Badge>Success</Badge></div><div className="log-item"><Glyph name="circlecheck"/><div className="grow"><strong>Repository metadata synchronized</strong><p>Last run: {lastSync} · {syncRuns} manual syncs</p></div><Badge>Success</Badge></div><div className="log-item"><Glyph name="clock"/><div className="grow"><strong>Submission moderation</strong><p>{pending.length} item(s) waiting for review</p></div><Badge>{pending.length?"Pending":"Clear"}</Badge></div></div><p className="fine muted" style={{marginTop:15}}>The pipeline is simulated and does not call GitHub or a backend.</p></>}
-    </div></main>;
+import { Breadcrumb } from "@/components/layout/breadcrumb";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { AdminActionSubmit } from "@/components/directory/admin-action-submit";
+import { logoutAdmin } from "@/app/admin/actions";
+import { ADMIN_PAGE_SIZE, type AdminQueuePage, type QueueFilter } from "@/lib/admin/review";
+
+const filters: Array<{ id: QueueFilter; label: string }> = [
+  { id: "pending", label: "Pending" },
+  { id: "reviewed", label: "Reviewed" },
+  { id: "published", label: "Published" },
+  { id: "rejected", label: "Rejected" },
+  { id: "review-required", label: "Review required" },
+];
+
+function filterValue(value: string | undefined): QueueFilter {
+  return filters.some((filter) => filter.id === value) ? value as QueueFilter : "pending";
 }
+
+function displayStatus(status: string) {
+  return status.replaceAll("_", " ");
+}
+
+function date(value: string | null) {
+  if (!value) return "No observation";
+  return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value));
+}
+
+export function AdminPage({
+  queue,
+  selectedFilter,
+  error,
+  access,
+}: {
+  queue: AdminQueuePage;
+  selectedFilter: QueueFilter;
+  error?: string;
+  access?: string;
+}) {
+  const pageCount = Math.max(1, Math.ceil(queue.total / ADMIN_PAGE_SIZE));
+  const safePage = Math.min(queue.page, pageCount);
+  return (
+    <main className="container page">
+      <Breadcrumb items={[{ label: "Outlist", href: "/" }, { label: "Editorial review" }]} />
+      <div className="page-head" style={{ marginTop: 14 }}>
+        <div>
+          <h1 className="page-title">Editorial review</h1>
+          <p className="muted" style={{ margin: 0 }}>Review source evidence, record human decisions, and publish eligible projects.</p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button asChild variant="outline"><Link href="/explore">View public directory</Link></Button>
+          <form action={logoutAdmin}><AdminActionSubmit variant="outline" pendingLabel="Signing out…">Sign out</AdminActionSubmit></form>
+        </div>
+      </div>
+
+      {access === "denied" && <div className="alert-inline" role="alert"><strong>Administrator access denied.</strong> The current account is not on the administrator allowlist.</div>}
+      {access === "unavailable" && <div className="alert-inline" role="alert"><strong>Access could not be verified.</strong> Try again after Supabase is available.</div>}
+      {error === "load" && <div className="alert-inline" role="alert"><strong>Review data is unavailable.</strong> The database read failed, so no cached or demo data is shown.</div>}
+
+      <div className="alert-inline" role="note"><strong>Publication policy:</strong> GitHub license detection is evidence only. Publishing requires recorded administrator license and quality decisions, current public repository evidence, active categories, and no unresolved review items.</div>
+
+      <nav className="admin-tabs" aria-label="Project review filters">
+        {filters.map((filter) => (
+          <Link key={filter.id} className={`admin-tab ${selectedFilter === filter.id ? "active" : ""}`} href={`/admin?filter=${filter.id}`} aria-current={selectedFilter === filter.id ? "page" : undefined}>
+            {filter.label}
+          </Link>
+        ))}
+      </nav>
+
+      <div className="section-head">
+        <div><h2 className="section-title" style={{ fontSize: 18 }}>{filters.find((filter) => filter.id === selectedFilter)?.label} projects</h2><p className="section-subtitle">Showing {queue.rows.length ? (safePage - 1) * queue.pageSize + 1 : 0}–{Math.min(safePage * queue.pageSize, queue.total)} of {queue.total} database records.</p></div>
+      </div>
+      {queue.rows.length ? <div className="table-scroll">
+        <table className="data-table">
+          <thead><tr><th>Project and source</th><th>Primary category</th><th>Publication / assessment</th><th>License</th><th>Flags / open items</th><th>Last source observation</th><th>Priority</th></tr></thead>
+          <tbody>{queue.rows.map(({ project, repository, categoryNames, assessment, openReviewItems, openReviewReasons, licenseAssessmentStatus, priority, qualityFlags }) => (
+            <tr key={project.id}>
+              <td><Link href={`/admin/projects/${project.id}`}><strong>{project.name || "Unnamed project"}</strong><div className="fine muted mono">{repository?.full_name ?? "Primary repository missing"}</div></Link>{repository?.canonical_url && <a className="fine muted" href={repository.canonical_url} target="_blank" rel="noreferrer">GitHub source ↗</a>}</td>
+              <td>{categoryNames[0] ?? <span className="muted">Uncategorized</span>}{categoryNames.length > 1 && <div className="fine muted">+{categoryNames.length - 1} more</div>}</td>
+              <td><Badge variant="dot">{displayStatus(project.publication_status)}</Badge><div className="fine muted" style={{ marginTop: 5 }}>Assessment: {assessment?.status ?? "not available"}</div></td>
+              <td><Badge>{displayStatus(project.license_status)}</Badge><div className="fine muted" style={{ marginTop: 5 }}>{project.license_identifier ?? "No identifier"}</div><div className="fine muted">Assessment: {displayStatus(licenseAssessmentStatus)}</div></td>
+              <td>{qualityFlags.length ? <><span>{qualityFlags.length} flag(s)</span><div className="fine muted" style={{ marginTop: 4 }}>{qualityFlags.slice(0, 2).map((flag, index) => {
+                const item = typeof flag === "object" && flag !== null && !Array.isArray(flag) ? flag : {};
+                const code = "code" in item && typeof item.code === "string" ? item.code : "assessment flag";
+                const severity = "severity" in item && typeof item.severity === "string" ? item.severity : "review";
+                return <div key={`${code}-${index}`}>{severity}: {code}</div>;
+              })}</div></> : "No assessment flags"}<div className="fine muted" style={{ marginTop: 5 }}>{openReviewItems} open review item(s)</div>{openReviewReasons.map((reason, index) => <div className="fine muted" key={`${index}-${reason}`}>{reason}</div>)}</td>
+              <td>{date(repository?.source_observed_at ?? assessment?.source_observed_at ?? null)}</td>
+              <td><Badge variant={priority === "high" ? "dot" : "default"}>{priority}</Badge></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div> : <EmptyState title="No projects in this view" description="The selected database filter has no review records." />}
+
+      <div className="flex justify-between items-center gap-3 flex-wrap" style={{ marginTop: 18 }}>
+        <span className="fine muted">Page {safePage} of {pageCount}</span>
+        <div className="flex gap-2">
+          {safePage > 1 && <Button asChild variant="outline" size="sm"><Link href={`/admin?filter=${selectedFilter}&page=${safePage - 1}`}>Previous</Link></Button>}
+          {safePage < pageCount && <Button asChild variant="outline" size="sm"><Link href={`/admin?filter=${selectedFilter}&page=${safePage + 1}`}>Next</Link></Button>}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export { filterValue };

@@ -9,13 +9,14 @@ type TestUsers = Record<
 >;
 
 const users = JSON.parse(process.env.AUTH_E2E_USERS ?? "{}") as TestUsers;
+const editorialFixture = JSON.parse(process.env.AUTH_E2E_PROJECT_FIXTURE ?? "{}") as { projectId: string; projectName: string };
 const mailpitUrl = process.env.AUTH_E2E_MAILPIT_URL;
 const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const secretKey = process.env.SUPABASE_SECRET_KEY;
 const requestMessage =
   "The request was processed. If this address is enabled for administrator access, follow the instructions sent to your inbox.";
 
-if (!mailpitUrl || !apiUrl || !secretKey || !users.login?.email) {
+if (!mailpitUrl || !apiUrl || !secretKey || !users.login?.email || !editorialFixture.projectId || !editorialFixture.projectName) {
   throw new Error("Auth E2E setup did not provide required local test values");
 }
 
@@ -117,7 +118,7 @@ test("anonymous access redirects and keeps protected content absent", async ({ p
   expect(response?.status()).toBe(200);
   await expect(page.locator("body")).toContainText("Administrator sign in");
   await expect(page.getByRole("heading", { name: "Administrator sign in" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 
@@ -125,16 +126,30 @@ test("a forged login-route header cannot bypass admin protection", async ({ page
   await page.setExtraHTTPHeaders({ "x-outlist-admin-login-route": "1" });
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 
-test("an allowlisted administrator verifies a Mailpit OTP and reaches the dashboard", async ({ page }) => {
+test("an allowlisted administrator reviews and edits a real Supabase project draft", async ({ page }) => {
   await requestCode(page, users.login.email);
   const code = await readMailpitCode(users.login.email);
   await verifyCode(page, code);
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
+  const projectLink = page.getByRole("link", { name: new RegExp(editorialFixture.projectName) });
+  await expect(projectLink).toBeVisible();
+  await projectLink.click();
+  await expect(page).toHaveURL(new RegExp(`/admin/projects/${editorialFixture.projectId}`));
+  await expect(page.getByRole("heading", { name: editorialFixture.projectName })).toBeVisible();
+  await expect(page.getByText("Stable GitHub repository ID")).toBeVisible();
+  await expect(page.getByText("Source provenance and freshness")).toBeVisible();
+  await page.getByLabel("Summary").fill("An editorially corrected Supabase-backed summary for browser coverage.");
+  await page.getByLabel("Why are these corrections justified?").fill("The official project website confirms this summary and project description.");
+  await page.getByRole("button", { name: "Save editorial corrections" }).click();
+  await expect(page).toHaveURL(/result=saved/);
+  await expect(page.getByText("Saved.")).toBeVisible();
+  await page.getByText("Existing editorial overrides").click();
+  await expect(page.locator("code").filter({ hasText: /An editorially corrected Supabase-backed summary/ })).toBeVisible();
   await expectAdminCookie(page);
   await expectNoStore(await page.goto("/admin"));
 });
@@ -143,16 +158,16 @@ test("an administrator session survives reload and direct navigation", async ({ 
   await requestCode(page, users.session.email);
   const code = await readMailpitCode(users.session.email);
   await verifyCode(page, code);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
   await expectAdminCookie(page);
 
   await page.reload();
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
 
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
   await expectNoStore(response);
 });
 
@@ -163,11 +178,11 @@ test("a non-admin Auth user can verify OTP but is denied dashboard access", asyn
   await expect(page.locator(".form-card p[role='alert']")).toHaveText(
     "Sign-in could not be completed. Check the code or contact the site administrator.",
   );
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
 
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 
@@ -175,7 +190,7 @@ test("removing an allowlist row revokes the next request with an existing sessio
   await requestCode(page, users.revoke.email);
   const code = await readMailpitCode(users.revoke.email);
   await verifyCode(page, code);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
   await expectAdminCookie(page);
 
   const { error } = await supabaseAdmin
@@ -186,7 +201,7 @@ test("removing an allowlist row revokes the next request with an existing sessio
 
   const response = await page.goto("/admin");
   await expect(page.getByRole("heading", { name: "Administrator access denied" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectAdminCookie(page);
   await expectNoStore(response);
 });
@@ -195,7 +210,7 @@ test("the sign-out form clears the browser session and blocks the old session", 
   await requestCode(page, users.logout.email);
   const code = await readMailpitCode(users.logout.email);
   await verifyCode(page, code);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toBeVisible();
   await expectAdminCookie(page);
 
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -206,7 +221,7 @@ test("the sign-out form clears the browser session and blocks the old session", 
 
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 
@@ -233,7 +248,7 @@ test("an incorrect OTP is rejected without granting access", async ({ page }) =>
 
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 
@@ -255,7 +270,7 @@ test("an expired OTP is rejected without granting access", async ({ page }) => {
 
   const response = await page.goto("/admin");
   await expect(page).toHaveURL(/\/admin\/login$/);
-  await expect(page.getByRole("heading", { name: "Directory administration" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Editorial review" })).toHaveCount(0);
   await expectNoStore(response);
 });
 

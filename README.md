@@ -39,6 +39,7 @@ existing routes.
 | `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
 | `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
 | `bun run test:logos-db` | Exercise real logo discovery, approval, and public Storage against local Supabase |
+| `bun run test:editorial-db` | Exercise real authenticated editorial decisions and publication against local Supabase |
 | `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
@@ -83,22 +84,18 @@ manager lockfiles.
 - `/alternatives` — Browse proprietary-software alternatives
 - `/submit` — Browser-local submission queue
 - `/admin/login` — Invite-only administrator email OTP sign-in
-- `/admin` — Protected browser-local review queue and mock sync controls
+- `/admin` — Protected, paginated Supabase-backed editorial review queue
+- `/admin/projects/[id]` — Private source evidence, assessments, editorial corrections, decisions, and publishing
 
-The existing component-based UI, design, CSS, and all 33 sample projects remain
-in place. Demo repository metrics are illustrative. Directory edits are stored
-in browser `localStorage`; they are not shared across users or devices. The
-admin controls remain demonstrations and are not connected to a database. A
-separate GitHub adapter can inspect repositories and search approved query
-partitions. Its bounded discovery CLI persists private, unreviewed candidates
-and checkpoints to Supabase. The separate enrichment CLI fetches by stable
-GitHub repository ID and writes canonical repositories, source provenance,
-languages, topics, releases, and daily snapshots. Candidates, enriched
-repositories, assessed project drafts, and published projects remain distinct
-states. Assessment creates only pending-review drafts and never verifies
-licenses or quality. `/admin` requires Supabase Auth and a
-matching UUID in the private `public.admin_users` allowlist. See
-[ADMIN_AUTH.md](ADMIN_AUTH.md) for setup and administrator provisioning.
+The public directory still renders the committed 33-project JSON demo, and its
+sample metrics are illustrative. Submission forms remain browser-local. The
+admin review queue is separate: it reads actual database drafts and private
+evidence on the server, and its actions write through service-role-only
+PostgreSQL functions after a fresh administrator allowlist check. Assessment
+creates pending-review drafts but never verifies a license or quality. See
+[ADMIN_AUTH.md](ADMIN_AUTH.md) for OTP setup and administrator provisioning,
+and [DATA_PIPELINE.md](DATA_PIPELINE.md) for editorial evidence and publication
+policy.
 
 The pipeline stages are distinct: **discovered candidate ≠ enriched
 repository ≠ assessed project draft ≠ published project**.
@@ -358,6 +355,35 @@ When configuring the app to use local Supabase, copy `.env.example` to
 `.env.local` and fill it with values printed by `bun run supabase status`.
 Never put a secret key in a `NEXT_PUBLIC_` variable.
 
+## M1-07 editorial review and publication
+
+Administrators use `/admin` to review paginated database drafts and
+`/admin/projects/[id]` to inspect repository observations, assessment evidence,
+license uncertainty, category suggestions, queue items, overrides, and audit
+decisions. Editable fields are limited to project name, summary, description,
+official website, categories, and tags. The project slug and repository
+identity do not change through this workflow.
+
+Publishing requires an administrator to cite independent licensing evidence,
+select an SPDX identifier on the pinned OSI-approved list, and explicitly
+confirm the project is open source. GitHub's detected license is only source
+evidence. The administrator must separately confirm current repository
+availability and minimum catalog quality; this is not a security or code
+audit. Current validated source observations, an active category, and resolved
+blocking review items are required. Database functions recheck the allowlist,
+source freshness, decisions, and project revision in the same transaction that
+publishes and appends the audit event. Anonymous and ordinary authenticated
+clients cannot call these functions or read the decision table.
+
+Editorial decisions are append-only. A stale form cannot replace a newer
+administrator decision. There is no bulk publication, destructive delete, or
+automated publication path. Rollback limitations: a published project is not
+removed by this workflow, and audit decisions are immutable; a future
+unpublishing or correction policy requires a separately reviewed migration and
+decision path. CI exercises the complete workflow against local Supabase Auth,
+PostgreSQL, and public RLS; hosted migrations and real project publication are
+not part of CI.
+
 ## Architecture and plans
 
 - [Architecture](ARCHITECTURE.md) describes the current app and intended system boundaries.
@@ -366,18 +392,14 @@ Never put a secret key in a `NEXT_PUBLIC_` variable.
 - [Data pipeline](DATA_PIPELINE.md) distinguishes candidates, enriched repositories, and published projects.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
-Public demo routes and their localStorage behavior do not query the database.
-M0-03 adds invite-only administrator OTP authentication, SSR session refresh,
-per-request UUID allowlist authorization, and real local browser verification
-for the demo admin route; it does not connect moderation or ingestion controls
-to production tables. Hosted Supabase configuration and hosted SMTP delivery
-remain unverified. The search RPC, server-side catalog integration, submission
-endpoint, project publication tools, and recurring discovery remain later
-milestones. GitHub Actions validates the app, rebuilds the local database,
-tests discovery, enrichment, assessment, logo Storage, and the unified pilot
-against deterministic GitHub fixtures, and runs isolated Chromium
-authentication checks without hosted credentials. The M1-06 operator workflow
-does not publish projects or approve licenses, quality, or logos.
+The public demo routes still render sample JSON and do not query the database.
+M1-07 adds a separate authenticated review workflow for real Supabase drafts;
+it does not connect public search or project pages to the production catalog.
+Hosted Supabase configuration and SMTP delivery remain unverified. The next
+milestones are PostgreSQL-backed catalog search and connecting the existing
+public Outlist interface to that search. CI validates the app, local migrations,
+database grants and RLS, real local Auth and PostgreSQL editorial decisions,
+and isolated Chromium flows without hosted credentials.
 
 ## Environment variables
 

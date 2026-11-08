@@ -13,8 +13,8 @@ privileged server clients, Zod configuration validation, versioned SQL
 migrations, a normalized PostgreSQL catalog, database policies, and a
 `project-logos` Storage bucket. Public UI still reads the committed 33-project
 JSON catalog. The admin route uses Supabase Auth for invite-only OTP sign-in
-and authorization, while its moderation controls remain localStorage
-demonstrations. A standalone, read-only GitHub REST adapter and local
+and has a separate Supabase-backed editorial review and publication workflow.
+A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
 unreviewed candidates and durable checkpoints to Supabase. The public UI still
@@ -25,6 +25,9 @@ worker that turns successfully enriched repositories into explainable
 assessments and pending-review drafts through a single transaction. M1-05 adds
 pending logo candidates, and M1-06 composes all four existing workers through
 a bounded operator command with service-only inventory and integrity reports.
+M1-07 adds private queue/detail reads, evidence-backed editorial corrections,
+explicit license and quality decisions, conflict-fenced status changes, and
+atomic service-role-only publication.
 
 ## Intended system
 
@@ -34,8 +37,10 @@ Browser
        ├─ Supabase SSR client: publishable key + request cookies
        ├─ Admin Proxy: verified claims refresh for /admin routes only
        ├─ Admin server gate: verified Auth UUID + fresh admin_users lookup
+       ├─ Editorial Server Actions: fresh allowlist check + strict Zod inputs
        └─ Privileged Supabase client: secret key, isolated server modules
             ├─ Supabase PostgreSQL: catalog, provenance, moderation, and ingestion state
+            │    └─ Narrow editorial RPCs: eligibility checks + revision + audit + publish transaction
             └─ Supabase Storage: approved project logos
 
 Standalone Bun discovery worker (M1-02)
@@ -150,6 +155,21 @@ license verification or publication eligibility.
   Any future protected Server Action or Route Handler must call
   `requireAdmin()` independently before performing work; Proxy routing alone
   is not authorization.
+- Editorial Server Actions call `requireAdmin()` and validate a fixed set of
+  fields with Zod. The service-role functions recheck `admin_users` using the
+  authenticated UUID passed only by the server action. They accept only narrow
+  operations: save editorial fields, verify a license, verify minimum quality,
+  change review state, resolve one queue item, or publish one project.
+- Queue and detail reads use the privileged client only after an allowlist
+  check, and are bounded (25 projects per page and finite evidence lists).
+  Private source payloads, assessments, overrides, review items, and decisions
+  are never queried from browser code. The service key is server-only.
+- `editorial_revision` fences stale forms. License and quality decisions also
+  bind to the exact source observation the administrator saw. The publication
+  RPC takes project and repository locks, rechecks evidence and open review
+  items, updates publication state, closes applicable queue rows, and appends
+  one audit record in a single transaction. Repeated publication is
+  idempotent. Audit rows reject update and delete operations.
 - Logout is a POST Server Action that calls `signOut()`, clears Supabase Auth
   cookies, and redirects to `/admin/login`.
 - `public.admin_users` remains private under its existing RLS and grants. The
@@ -171,6 +191,10 @@ It defines `projects`, `repositories`, normalized categories and tags,
 repository metadata and snapshots, source provenance, logo metadata,
 alternatives, submissions, moderation, administrator allowlisting, restartable
 ingestion state, and private repository assessments with source-reference rows.
+M1-07 adds the project editorial revision and the private append-only
+`editorial_decisions` table. Editorial field overrides are applied when
+service/pipeline updates leave the revision unchanged; review actions increment
+the revision and write their overrides and audit rows atomically.
 The project points to its one primary repository
 through a same-project composite foreign key; project/category and project/tag
 relationships are many-to-many. Repository candidates remain separate from
@@ -218,7 +242,12 @@ and lint with `bun run supabase:db-lint`. Generate types after migrations with
 test executes the real CLI through PostgREST using deterministic GitHub HTTP
 fixtures, then checks draft creation, review queue linkage, idempotency,
 rename handling, editorial preservation, and ordinary-client denial. No
-hosted project or production credential is required.
+hosted project or production credential is required. `bun run test:editorial-db`
+uses local Auth identities and PostgreSQL to exercise
+administrator allowlisting, independent license evidence, explicit quality
+review, publication blockers, concurrency, revocation, audit events, and public
+RLS visibility. Playwright also signs in through local OTP/Mailpit and edits a
+real Supabase draft in the production Next.js build.
 
 ## M1-06 ingestion operator boundary
 
@@ -266,3 +295,22 @@ from the renamed canonical name without a false finding. Candidate-to-repository
 ID conflicts remain critical. A valid editorial publication is not classified
 as unauthorized based only on automated-assessment provenance. The audit
 returns findings only; it never repairs or deletes records.
+
+## M1-07 editorial boundary
+
+M1-07 does not expose a generic privileged project update. Admins can change
+name, summary, description, official website, active categories, and tags;
+slug, stable repository identity, featured rank, and logo approval remain
+outside the review form. License verification accepts current OSI-approved
+SPDX identifiers with independent non-GitHub evidence and an explicit human
+decision. The database binds both license and quality reviews to current
+validated source provenance. Quality review records minimum catalog checks and
+states explicitly that it is not a security/code audit or reliability claim.
+
+Only projects with complete current evidence, public available repositories,
+active categories, verified license and quality decisions, and no unresolved
+blocking review items can be published. Public readers continue using the
+existing RLS policy. This milestone does not connect the public directory to
+PostgreSQL search or perform hosted migrations. Published projects have no
+rollback action in the admin UI; the append-only audit remains available for a
+separately reviewed correction or unpublishing policy.

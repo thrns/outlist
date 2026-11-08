@@ -46,15 +46,15 @@ This roadmap separates the current demo from planned platform capabilities.
 - Keep moderation, publishing, and ingestion controls as clearly labeled
   browser-local demonstrations.
 
-### Remaining limitations after M0-03
+### Historical limitations after M0-03 (superseded by M1-07)
 
 - Hosted Supabase project settings and administrator provisioning remain
   outside this verification. The CI suite covers local Supabase Auth,
   PostgreSQL, Mailpit, and the production Next.js browser flow only; it does
   not prove hosted SMTP delivery or hosted Auth behavior.
-- Admin moderation, project publishing, and sync controls still update only
-  browser `localStorage`; these administrator controls do not write to the
-  production database.
+- At this milestone, moderation controls still updated browser `localStorage`.
+  M1-07 replaces the `/admin` moderation demo with a database-backed editorial
+  queue and controlled publication workflow.
 
 ## M1-01 — GitHub REST API adapter
 
@@ -261,16 +261,48 @@ This roadmap separates the current demo from planned platform capabilities.
 - Hosted migration and ingestion have not been executed automatically; each
   requires explicit operator target verification and approval.
 
+## M1-07 — Functional editorial review and publishing (implemented)
+
+- Replaced `/admin` local demonstration actions with a private paginated
+  Supabase review queue and authenticated `/admin/projects/[id]` evidence page.
+- Added narrow Zod-validated server actions for editorial corrections,
+  categories/tags, license verification, quality review, pending/review-required
+  outcomes, rejection, explicit return-to-review, queue-item resolution, and
+  publication. Every action performs a fresh administrator allowlist check.
+- Added project revisions, field overrides, and an append-only decision log.
+  Stale forms conflict. Source refreshes preserve editorial overrides and
+  rejected project state.
+- Added independent human licensing evidence requirements and a separate
+  quality decision that is explicitly not a security or code audit.
+- Added a service-role-only atomic publication RPC. It rechecks allowlisting,
+  source freshness/provenance, repository visibility and availability, human
+  decisions, active categories, unresolved review items, and concurrency before
+  making a project public under existing RLS.
+- Added pgTAP security assertions, real local Auth/PostgreSQL workflow
+  integration, an authenticated Playwright review/edit flow, generated type
+  parity, and CI coverage. No hosted migration, production publication, merge,
+  or deployment is included.
+- Documented policy, evidence, audit, and rollback limits in the README,
+  architecture, and data pipeline guides.
+
+### Remaining limitations after M1-07
+
+- Public project routes and search still use the illustrative JSON catalog;
+  the immediate next milestones are PostgreSQL-backed catalog search and
+  connecting the existing public Outlist interface to that search.
+- Hosted migrations and live project publication have not been run. The audit
+  is append-only and the admin flow has no unpublish or destructive rollback
+  action.
+
 ## Later milestones
 
-- Implement server-side data access and replace browser-only persistence when
-  the server and access-control model is ready.
-- Add controlled editorial review and publication for source-backed drafts.
+- Add PostgreSQL-powered catalog search and connect the existing public UI to
+  published records.
+- Add a validated public submission/correction endpoint after abuse controls
+  and review handling are designed.
 - Add recurring enrichment only after operational limits and quality controls
   are established.
-- Move catalog search and filtering to PostgreSQL as the schema and query
-  behavior are established.
 
-The local schema and bounded end-to-end operator pilot are implemented.
-Hosted Supabase deployment, a database-backed catalog, production search, and
-database-backed moderation remain outside the current demo.
+The local schema, bounded ingestion pilot, and authenticated editorial
+publishing workflow are implemented. Hosted Supabase deployment, public
+database-backed catalog search, and frontend integration remain future work.

@@ -77,6 +77,26 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"editorial_decisions": {
+                  Row: {
+                    "action": string,"actor_user_id": string,"created_at": string,"evidence": NonNullable<Json>,"id": string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "action": string,"actor_user_id": string,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string
+                  }
+                  Update: {
+                    "action"?: string,"actor_user_id"?: string,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state"?: string,"project_id"?: string,"reason"?: string,"resulting_revision"?: number,"resulting_state"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "editorial_decisions_project_id_fkey"
+      columns: ["project_id"]
+isOneToOne: false
+      referencedRelation: "projects"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"editorial_overrides": {
                   Row: {
                     "approved_at": string,"approved_by": string,"created_at": string,"created_by": string | null,"field_key": string,"id": string,"override_value": NonNullable<Json>,"project_id": string,"source_record_id": string | null,"updated_at": string
@@ -267,14 +287,14 @@ isOneToOne: false
                   ]
                 },"projects": {
                   Row: {
-                    "created_at": string,"description": string,"editorial_rank": number,"featured": boolean,"id": string,"last_verified_at": string | null,"license_identifier": string | null,"license_status": string,"license_verified_at": string | null,"name": string,"official_website_url": string | null,"primary_repository_id": string | null,"publication_status": string,"published_at": string | null,"quality_status": string,"search_document": unknown,"slug": string,"summary": string,"updated_at": string
+                    "created_at": string,"description": string,"editorial_rank": number,"editorial_revision": number,"featured": boolean,"id": string,"last_verified_at": string | null,"license_identifier": string | null,"license_status": string,"license_verified_at": string | null,"name": string,"official_website_url": string | null,"primary_repository_id": string | null,"publication_status": string,"published_at": string | null,"quality_status": string,"search_document": unknown,"slug": string,"summary": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"description"?: string,"editorial_rank"?: number,"featured"?: boolean,"id"?: string,"last_verified_at"?: string | null,"license_identifier"?: string | null,"license_status"?: string,"license_verified_at"?: string | null,"name"?: string,"official_website_url"?: string | null,"primary_repository_id"?: string | null,"publication_status"?: string,"published_at"?: string | null,"quality_status"?: string,"search_document"?: never,"slug": string,"summary"?: string,"updated_at"?: string
+                    "created_at"?: string,"description"?: string,"editorial_rank"?: number,"editorial_revision"?: number,"featured"?: boolean,"id"?: string,"last_verified_at"?: string | null,"license_identifier"?: string | null,"license_status"?: string,"license_verified_at"?: string | null,"name"?: string,"official_website_url"?: string | null,"primary_repository_id"?: string | null,"publication_status"?: string,"published_at"?: string | null,"quality_status"?: string,"search_document"?: never,"slug": string,"summary"?: string,"updated_at"?: string
                   }
                   Update: {
-                    "created_at"?: string,"description"?: string,"editorial_rank"?: number,"featured"?: boolean,"id"?: string,"last_verified_at"?: string | null,"license_identifier"?: string | null,"license_status"?: string,"license_verified_at"?: string | null,"name"?: string,"official_website_url"?: string | null,"primary_repository_id"?: string | null,"publication_status"?: string,"published_at"?: string | null,"quality_status"?: string,"search_document"?: never,"slug"?: string,"summary"?: string,"updated_at"?: string
+                    "created_at"?: string,"description"?: string,"editorial_rank"?: number,"editorial_revision"?: number,"featured"?: boolean,"id"?: string,"last_verified_at"?: string | null,"license_identifier"?: string | null,"license_status"?: string,"license_verified_at"?: string | null,"name"?: string,"official_website_url"?: string | null,"primary_repository_id"?: string | null,"publication_status"?: string,"published_at"?: string | null,"quality_status"?: string,"search_document"?: never,"slug"?: string,"summary"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -653,7 +673,25 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "approve_project_logo_candidate":
+            "admin_publish_project":
+{ Args: { "p_actor": string,"p_expected_revision": number,"p_project_id": string,"p_reason": string }; Returns: Json
+                           },
+"admin_resolve_project_review_item":
+{ Args: { "p_actor": string,"p_expected_revision": number,"p_project_id": string,"p_queue_id": string,"p_reason": string }; Returns: Json
+                           },
+"admin_save_project_editorial":
+{ Args: { "p_actor": string,"p_category_ids": (string)[],"p_changes": Json,"p_expected_revision": number,"p_project_id": string,"p_reason": string,"p_tags": (string)[] }; Returns: Json
+                           },
+"admin_set_project_review_state":
+{ Args: { "p_action": string,"p_actor": string,"p_expected_revision": number,"p_project_id": string,"p_reason": string }; Returns: Json
+                           },
+"admin_verify_project_license":
+{ Args: { "p_actor": string,"p_confirm_open_source": boolean,"p_evidence_reference": string,"p_expected_revision": number,"p_expected_source_observed_at": string,"p_license_identifier": string,"p_project_id": string,"p_reason": string }; Returns: Json
+                           },
+"admin_verify_project_quality":
+{ Args: { "p_actor": string,"p_confirm_review": boolean,"p_expected_revision": number,"p_expected_source_observed_at": string,"p_project_id": string,"p_reason": string }; Returns: Json
+                           },
+"approve_project_logo_candidate":
 { Args: { "p_approval_provenance": Json,"p_approval_token": string,"p_content_digest": string,"p_logo_id": string,"p_media_type": string,"p_storage_path": string,"p_worker_id": string }; Returns: Json
                            },
 "claim_discovery_partitions":

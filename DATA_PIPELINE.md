@@ -2,10 +2,11 @@
 
 ## Current behavior
 
-The current catalog is the checked-in `src/data/projects.json` sample set. It
+The public catalog is the checked-in `src/data/projects.json` sample set. It
 contains 33 illustrative project records and is validated by
-`bun run validate:data` and Vitest. The UI searches and sorts this data in the
-browser. Submission, moderation, and sync actions are local demo behavior.
+`bun run validate:data` and Vitest. Public pages still search and sort this data
+in the browser. Submission remains local demo behavior. The `/admin` editorial
+queue and project-review page read and update real Supabase drafts.
 
 The production schema starts with no project listings. The only seeded rows
 are the 11 category taxonomy records. M1-01 adds a read-only GitHub REST API
@@ -433,9 +434,11 @@ HTTP fixtures. CI also runs assessment pgTAP tests, database lint, and generated
 type parity checks without hosted Supabase or a GitHub token.
 
 The stage boundaries are explicit: **discovered candidate ≠ enriched
-repository ≠ assessed project draft ≠ published project**. Assessment does
-not approve licenses, verify quality, apply editorial actions, fetch logos,
-publish projects, or connect the public frontend to Supabase.
+repository ≠ assessed project draft ≠ published project**. The assessment
+worker itself does not approve licenses, verify quality, apply editorial
+actions, fetch logos, or connect the public frontend to Supabase. M1-07
+provides a separate explicit administrator workflow for editorial review and
+publication.
 
 Official references: [repository endpoints](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28),
 [languages](https://docs.github.com/en/rest/repos/repos?apiVersion=2022-11-28#list-repository-languages),
@@ -760,3 +763,59 @@ verifiable reference are blocked. This explicit CLI guard does not replace
 separate operator approval for any hosted migration or production write.
 Fixture validation, live GitHub reads, and hosted Supabase verification are
 three different checks and must be reported separately.
+
+## M1-07 editorial review and publication
+
+`/admin` queries actual `projects` through a server-only privileged client only
+after `requireAdmin()` performs a fresh Auth UUID and `admin_users` check. Queue
+filters are applied in PostgreSQL with 25-row pagination. `/admin/projects/[id]`
+loads bounded repository observations, validated source references, the
+current assessment, category suggestions, tags, logos, review items, existing
+overrides, and prior decisions. Raw provider response bodies are not rendered.
+The page labels provider-supplied evidence, automated assessment, and human
+decisions separately. The detected GitHub license is not treated as proof.
+
+Administrators can edit only name, summary, description, official website,
+active categories, and supported tags. Slug and repository identity are fixed.
+The server action accepts a fixed Zod schema and calls a narrow PostgreSQL
+operation. Overrides and category/tag links are committed with the audit entry.
+The database reapplies stored project-field overrides when a later pipeline
+update leaves `editorial_revision` unchanged.
+
+License verification is an explicit human decision. The administrator must
+inspect the license evidence, select a current SPDX identifier marked OSI
+approved by the pinned SPDX snapshot, cite an independent URL outside GitHub,
+give a reason, and confirm the project meets Outlist's open-source policy.
+Unknown, conflicting, missing, or compound GitHub detections stay unverified
+until an administrator supplies sufficient independent evidence. A later
+source observation invalidates the prior verification for publication until
+reviewed again.
+
+Quality verification is also human. The administrator reviews current
+repository availability, validated source provenance, and assessment flags.
+The resulting record is a minimum catalog review; it does not state that the
+code has passed a security audit, code audit, or reliability guarantee.
+
+Publishing is a single service-role-only transaction. It rechecks the acting
+UUID against `admin_users`, project revision, complete and fresh source
+evidence, explicit GitHub public/available state, current human license and
+quality decisions, name and summary, an active category, and absence of open
+review items. It locks the relevant records, sets `published_at`, records the
+reviewer and evidence, resolves applicable queue rows, and appends one audit
+event. A repeated request for an already published project is idempotent. The
+existing public RLS policy exposes only the resulting published row. Rejection
+is persisted on the project; reingestion does not restore it, and only an
+explicit administrator action can return it to review.
+
+`editorial_decisions` is private and append-only. Actions carry a project
+revision, and stale forms fail with a conflict. No browser can call editorial
+RPCs or read the audit table. There is no bulk publish or delete action. The
+workflow has no unpublish or audit rollback operation; any later correction or
+unpublishing policy requires its own reviewed design and migration.
+
+`bun run test:editorial-db` creates real local Auth identities and exercises
+PostgREST/PostgreSQL decisions, revocation, concurrent edits, restricted and
+incomplete evidence, publication blockers, audit correctness, and public RLS.
+The browser E2E uses local OTP through Mailpit and edits a real database draft.
+These checks do not run hosted migrations, publish live projects, or validate
+hosted email delivery.
