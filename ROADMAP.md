@@ -361,6 +361,38 @@ platform capabilities.
 - Hosted Supabase configuration, production catalog contents, and production
   latency have not been verified.
 
+## M1-10 — Production launch readiness and first live pilot preparation (implemented)
+
+- Added a read-only `bun run launch:preflight` report for target classification,
+  required configuration, applied migration versions, category taxonomy,
+  Storage, anonymous public search/RLS, administrator OTP/allowlist setup,
+  pipeline operations, integrity findings, inventory, and optional GitHub
+  rate-limit data. It redacts credential values and never starts ingestion or
+  writes database or Storage records.
+- Added a forward migration that updates the existing service-only pipeline
+  report to recognize M1-08, M1-09, and the launch-readiness migration. The
+  prior report's stale migration list could incorrectly mark a current schema
+  incomplete.
+- Added a read-only database security assertion, targeted unit coverage, and a
+  disposable-local-Supabase preflight integration in the existing database CI
+  job. The CI database job still applies the full chain from an empty database.
+- Documented the minimum Bun/Next.js deployment settings, human-controlled
+  migration workflow, bounded hosted pilot, lineage and editorial checks,
+  anonymous website smoke tests, measured scale-up gates, and separate website
+  and database recovery procedures. Corrected stale JSON and admin-demo docs.
+- No hosted resource, migration, deployment, live GitHub import, or real
+  publication was performed. Alternatives and public submissions remain
+  unavailable; ingestion remains manually operated.
+
+### Remaining limitations after M1-10
+
+- Hosted Supabase configuration, SMTP delivery, migration application, public
+  catalog contents, production latency, and website deployment remain
+  unverified. A separate authorization is required for each hosted operation.
+- The application has no general administrator unpublish action. The existing
+  system-origin demotion handles validated primary-source restrictions; other
+  publication corrections require an independently reviewed forward fix.
+
 ## Later milestones
 
 - Add a validated public submission/correction endpoint after abuse controls
@@ -369,6 +401,6 @@ platform capabilities.
   are established.
 
 The local schema, bounded ingestion pilot, authenticated editorial publishing,
-public PostgreSQL search/access layer, and live public catalog UI are
-implemented. Hosted Supabase deployment and public UI integration remain
-unverified.
+public PostgreSQL search/access layer, live public catalog UI, and launch
+preflight/runbook are implemented. Hosted Supabase deployment and the first
+real pilot remain unverified.

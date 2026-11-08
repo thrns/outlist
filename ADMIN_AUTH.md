@@ -160,10 +160,12 @@ invalid-or-expired state and lets the user request a fresh code.
 
 ## Scope and verification limits
 
-The admin dashboard is still a local browser demonstration. Approvals,
-rejections, featured and visibility toggles, submissions, and mock sync actions
-modify only the current browser's `localStorage`; they do not update production
-tables or call repository providers.
+The admin dashboard is backed by the Supabase editorial queue. Authorized
+administrators review actual drafts and source evidence, make explicit
+license and quality decisions, and publish individual projects through
+service-role-only transactions. Public alternatives and public submissions
+remain unavailable. The JSON catalog is retained for tests and validation; it
+is not used by public routes.
 
 Unit tests mock Supabase Auth and PostgREST calls. pgTAP checks ordinary-role
 access to `admin_users`. The `auth-e2e` CI job additionally starts a disposable
@@ -193,8 +195,11 @@ videos are disabled.
 This verifies the local Supabase Auth and PostgreSQL integration, local Mailpit
 delivery, and the production Next.js browser flow. It does not verify hosted
 Supabase project settings, administrator provisioning in a hosted project, or
-delivery through a hosted SMTP provider. Hosted SMTP delivery remains outside
-M0-03; Mailpit success is not evidence of production email deliverability.
+delivery through a hosted SMTP provider. Mailpit success is not evidence of
+production email deliverability. Complete the hosted allowlist, Site URL,
+redirect URL, OTP template, and SMTP steps in [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md)
+before beginning editorial review. No hosted administrator has been provisioned
+for M1-10.
 
 ## References
 

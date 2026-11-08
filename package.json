@@ -25,6 +25,8 @@
     "assess": "bun --conditions=react-server scripts/assess.ts",
     "logos": "bun --conditions=react-server scripts/logos.ts",
     "pipeline": "bun --conditions=react-server scripts/pipeline.ts",
+    "launch:preflight": "bun --conditions=react-server scripts/launch-preflight.ts",
+    "test:launch-preflight-db": "bun --conditions=react-server scripts/launch-preflight-db-integration.ts",
     "test:pipeline-db": "bun --conditions=react-server scripts/pipeline-db-integration.ts",
     "validate:data": "bun scripts/validate-data.mjs",
     "check": "bun run typecheck && bun run lint && bun run test && bun run validate:data && bun run build",

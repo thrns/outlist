@@ -15,6 +15,14 @@ bun run supabase:db-lint
 bun run supabase:types
 ```
 
+M1-10's forward migration also updates the service-only pipeline readiness
+report's expected migration list. `bun run launch:preflight` compares that
+read-only report with the versions in this directory and checks anonymous
+search/RLS, Storage, categories, Auth configuration, pipeline state, counts,
+and integrity findings. It does not apply migrations or write records. Review
+the target and follow [LAUNCH_RUNBOOK.md](../../LAUNCH_RUNBOOK.md) before any
+hosted migration operation.
+
 Database tests live in `supabase/tests/` and run through pgTAP. The CI database
 job also runs `bun run test:discovery-db` against local Supabase to exercise
 concurrent claims and transactional checkpoints through the service-role API,

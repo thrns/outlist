@@ -54,6 +54,8 @@ never fall back to sample projects.
 | `bun run test:public-search-db` | Verify anonymous search, filters, sorts, pagination, logo selection, RLS, and indexed query plans against local Supabase |
 | `bun run test:public-frontend-e2e` | Verify live public routes, catalog filters, URL state, logos, safety demotion, and browser behavior with local Supabase and Chromium |
 | `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
+| `bun run launch:preflight` | Read-only launch report for the configured Supabase target, migration state, public catalog, admin setup, pipeline, and integrity |
+| `bun run test:launch-preflight-db` | Verify launch preflight against disposable local Supabase |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
@@ -87,6 +89,16 @@ never fall back to sample projects.
 
 `bun.lock` is the committed dependency lockfile. Do not commit other package
 manager lockfiles.
+
+## Production launch preparation
+
+M1-10 adds a read-only preflight and an operator-run launch procedure. Start
+with `bun run launch:preflight`; it never runs discovery, changes records, or
+uploads Storage objects. Review [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md) for
+deployment settings, hosted migration review and application commands, the
+bounded first live GitHub pilot, manual editorial review, acceptance checks,
+and separate website/database recovery procedures. Hosted migrations, hosted
+configuration, deployment, real ingestion, and publication remain unverified.
 
 ## Public routes and remaining unavailable features
 
@@ -343,78 +355,14 @@ success. Fixture responses cannot be reported as live smoke output.
 
 #### Hosted Supabase change control
 
-Hosted migration and ingestion steps below are operator-run procedures. M1-06
-does not link, reset, migrate, or write to a hosted project automatically.
-Confirm the intended project reference and environment with the project owner,
-obtain explicit approval for the hosted operation, and keep production
-credentials in a server-side secret manager. Do not place `SUPABASE_SECRET_KEY`
-or `GITHUB_TOKEN` in any `NEXT_PUBLIC_` variable.
-
-1. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
-   `SUPABASE_SECRET_KEY`, `GITHUB_TOKEN` (optional), and
-   `OUTLIST_SUPABASE_ENVIRONMENT=staging` or `production` in the operator's
-   server environment. Confirm the URL-derived project reference independently.
-2. Review the ascending migration chain in `supabase/migrations/`, beginning
-   with the catalog schema and category seed, followed by discovery,
-   enrichment/source safety, assessment, logos, immutable logo assets,
-   `20261107130000_m1_06_pipeline_operations.sql`, and
-   `20261107140000_m1_06_lineage_integrity_correction.sql`. Run a schema-only read first
-   with `bun run supabase migration list --remote="$PROJECT_REF"` and compare
-   the remote history with the local files.
-3. Take a named, restorable Supabase dashboard backup/PITR restore point. For
-   an additional operator-held SQL backup, use the pinned CLI and protect the
-   output file:
-
-   ```bash
-   umask 077
-   bun run supabase db dump --remote="$PROJECT_REF" --schema public,private \
-     --file "$BACKUP_DIR/outlist-before-m1-06.sql"
-   ```
-
-   Keep database dumps out of the repository and verify the backup can be
-   retained and restored under the organization's normal process.
-4. After the migration operation itself is explicitly approved, deploy through
-   the standard Supabase migration workflow. If linking is preferred, link
-   manually to the already-confirmed project reference first. Then preview and
-   apply only the pending migration chain:
-
-   ```bash
-   bun run supabase db push --remote="$PROJECT_REF" --skip-vault --dry-run
-   bun run supabase db push --remote="$PROJECT_REF" --skip-vault
-   bun run supabase migration list --remote="$PROJECT_REF"
-   ```
-
-   The second `db push` is a hosted database write. Never run it without that
-   separate operator approval. The migration does not create projects, approve
-   licenses or logos, or publish listings.
-5. Before ingestion, configure the service key only in the operator's server
-   environment and run `bun run pipeline -- --status` and
-   `bun run pipeline -- --audit`. Confirm the host, project reference,
-   environment label, applied migration version, category seed, service RPC
-   permissions, Storage bucket settings, current leases, and inventory. Resolve
-   blockers and review findings first.
-6. After separate approval for the hosted ingestion itself, execute a small
-   batch with both explicit target guards:
-
-   ```bash
-   bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10 \
-     --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
-   ```
-
-   For an actual GitHub API smoke run, add `--live-smoke`; its stricter limits
-   remain one search page and no more than five enrichments, assessments, or
-   logo projects. The CLI blocks custom remote hosts whose project reference
-   cannot be verified.
-7. Save the structured run output, then run `--status` and `--audit`. Compare
-   actual inventory, run-scoped persisted-row checks, retries, and integrity
-   findings. Project drafts and logo candidates require human review.
-8. After interruption, inspect `--status`, confirm the prior worker has
-   stopped and leases have expired, then use `--resume --execute` with the same
-   hosted target guards. Existing discovery checkpoints and queue state remain
-   authoritative.
-
-Hosted setup is documented but is not verified by local fixtures or the CI
-workflow. No hosted migration or data write was performed for this milestone.
+Hosted migration and ingestion commands are separate human-controlled
+operations. Verify the exact target project, compare migration history, inspect
+the dry run, and complete the backup/security steps in
+[LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md). The operator preflight and existing
+pipeline status/audit are read-only. Hosted writes still require independent
+authorization and preserve both `--allow-hosted-writes` and
+`--confirm-project-ref <ref>` safeguards. No hosted migration, import, deploy,
+or publication has been performed.
 
 ### Real authentication integration checks
 

@@ -612,10 +612,10 @@ Public and authenticated clients can read published catalog data and safe
 relationships only. Source records, candidate queues, job history,
 submissions, review queue entries, editorial overrides, and administrator
 allowlisting have no client grants or read policies. Direct submission writes
-are disabled pending a validated server endpoint. Administrator authentication
-and the bounded discovery, enrichment, assessment, logo-candidate, and unified
-operator workflows are implemented; database-backed UI belongs to later
-milestones.
+are disabled pending a validated server endpoint. Administrator authentication,
+the bounded pipeline, authenticated editorial publishing, public PostgreSQL
+search, and the Supabase-backed public routes are implemented. The JSON catalog
+remains for tests and validation; it is not a public route fallback.
 
 Logo files use a public `project-logos` bucket with a 2 MiB limit and PNG,
 JPEG, and WebP input MIME restrictions. M1-05 stores normalized WebP only after
@@ -623,8 +623,9 @@ an explicit trusted operator action, because direct bucket URLs can bypass
 object-read policy checks. Revocation removes the object through the Storage
 API; deleting metadata alone would not delete the object.
 
-Recurring scheduling, remote migration deployment, publication workflows,
-search RPC, and public UI integration remain outside these milestones.
+Recurring ingestion, public alternatives, and public submissions remain
+unavailable. Hosted migration application, website deployment, live ingestion,
+and publication have not been performed; see the M1-10 launch procedure below.
 
 ## M1-06 end-to-end pilot and operational readiness
 
@@ -845,3 +846,39 @@ and the publication race.
 The browser E2E uses local OTP through Mailpit and edits a real database draft.
 These checks do not run hosted migrations, publish live projects, or validate
 hosted email delivery.
+
+## M1-10 production launch preparation
+
+`bun run launch:preflight` is a default read-only check. It reports the
+URL-derived Supabase project reference and environment label, migration
+versions, category seed, logo bucket configuration, anonymous search and RLS
+readiness, administrator allowlist and Auth email settings, pipeline inventory
+and activity, integrity findings, GitHub rate limits when a token is set, and
+published, unpublished, and pending-review counts. Credentials are represented
+only as configured/not configured. It never starts a pipeline worker, writes a
+record, or uploads an object. A hosted target requires an explicit project
+reference confirmation; redirect URLs and real OTP delivery remain manual
+checks because the Supabase API does not expose those project settings.
+
+The M1-10 forward migration updates the service-only pipeline report to include
+the full M1-09 and M1-10 migration chain. This fixes the earlier report's stale
+expected-version list, which could mark a clean current database incomplete.
+The migration chain remains the schema, RLS, Storage, taxonomy, and policy
+source of truth. CI creates an empty database from the ordered migrations and
+checks RLS, grants, search, publication, and source-safety behavior. Hosted
+migration history must still be reviewed and applied by a human; production
+migration application is not part of preflight.
+
+`LAUNCH_RUNBOOK.md` contains the provider-neutral Bun/Next.js deployment
+settings, explicit migration review/dry-run/apply/check commands, hosted target
+and Auth checks, the bounded live-smoke procedure, stage-specific reporting,
+manual editorial publication, site smoke checks, scale-up gates, and separate
+website and database recovery procedures. The existing pipeline remains
+manually operated. GitHub candidates, enriched repositories, assessments,
+pending drafts, and published projects remain separate counts. No automatic
+license verification, quality verification, or publication was added.
+
+No hosted migration, production deployment, real GitHub import, or live project
+publication has been performed. Alternatives and public submissions remain
+unavailable. Local tests and fixture-backed reports do not establish hosted
+connectivity, SMTP delivery, catalog contents, or production latency.
