@@ -21,7 +21,7 @@ export async function loadPublicDirectory(
   if (state.query.length > 0 && state.query.length < 3) {
     return { ...emptyPublicSearch(state.sort, state.page, PUBLIC_PAGE_SIZE), items: [] };
   }
-  const categories = [...new Set([...(fixedCategory ? [fixedCategory] : []), ...state.categories])].slice(0, 20);
+  const categories = fixedCategory ? [fixedCategory] : state.categories;
   const result = await searchPublicProjects({
     query: state.query || undefined,
     categories,

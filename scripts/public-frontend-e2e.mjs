@@ -187,6 +187,7 @@ async function seedFixtures() {
     "insert into public.repositories (id, project_id, provider, provider_repository_id, full_name, canonical_url, primary_language, stars, forks, provider_pushed_at, last_successful_sync_at, availability_status, is_private, visibility, is_disabled, source_field_states, source_observed_at, owner_login, repository_name)\n" +
     "select repository_id, project_id, provider, provider_id, full_name, canonical_url, language, stars, forks, now() - fixture_number * interval '1 minute', now() - interval '30 seconds', 'available', is_private, case when is_private then 'private' else 'public' end, false, '{\"visibility\":\"present\",\"license\":\"present\"}'::jsonb, now() - interval '1 minute', split_part(full_name, '/', 1), split_part(full_name, '/', 2) from m109_browser_fixtures;\n" +
     "insert into public.project_categories (project_id, category_id) select f.project_id, c.id from m109_browser_fixtures f join public.categories c on c.slug = f.category_slug;\n" +
+    "insert into public.project_categories (project_id, category_id) select f.project_id, c.id from m109_browser_fixtures f join public.categories c on c.slug = 'ai-machine-learning' where f.fixture_number = 1;\n" +
     "update public.projects p set primary_repository_id = f.repository_id, publication_status = f.publication_status, published_at = case when f.publication_status = 'published' then now() - f.fixture_number * interval '1 second' else null end from m109_browser_fixtures f where p.id = f.project_id;\n" +
     "end; $block$;");
 }
@@ -253,7 +254,7 @@ async function assertDatabaseFixtures() {
   const facets = await anonymous.rpc("get_public_catalog_facets");
   if (facets.error) throw new Error("Anonymous catalog facet fixture failed: " + facets.error.message);
   check(facets.data.categoryCounts.find((item) => item.slug === "developer-tools")?.projectCount === 6, "Category counts exclude unpublished and restricted fixtures.");
-  check(facets.data.categoryCounts.find((item) => item.slug === "ai-machine-learning")?.projectCount === 6, "Category counts include the second active fixture category.");
+  check(facets.data.categoryCounts.find((item) => item.slug === "ai-machine-learning")?.projectCount === 7, "Category counts include the second active fixture category and its overlapping project.");
   const denied = await anonymous.from("projects").update({ name: "Unauthorized public mutation" }).eq("id", fixtureProjects[0].projectId);
   check(denied.error?.code === "42501", "Anonymous visitors cannot mutate published catalog records.");
 }
@@ -270,6 +271,13 @@ async function expectResultCount(page, count) {
 async function expectNoStore(response, route) {
   const header = response?.headers()["cache-control"] ?? "";
   check(header.includes("no-store"), route + " sends a no-store response.");
+}
+
+async function expectOnlyCategoryFixtures(page, indexes, count) {
+  const hrefs = await page.locator(".cards-grid .project-card").evaluateAll((cards) => cards.map((card) => card.getAttribute("href")));
+  const expected = new Set(indexes.map((index) => "/project/" + fixtureSlug(index)));
+  check(hrefs.length === count && hrefs.every((href) => expected.has(href)),
+    "Every fixed-category result belongs to the route category, including projects with multiple category associations.");
 }
 
 async function assertUnavailableState(publicKey) {
@@ -387,13 +395,56 @@ async function assertCategoriesAndDetails(url) {
     const categoriesResponse = await page.goto(url + "/categories");
     await expect(page.getByRole("heading", { name: "Explore categories" })).toBeVisible();
     await expect(page.locator('a[href="/category/developer-tools"]')).toContainText("6 published projects");
-    await expect(page.locator('a[href="/category/ai-machine-learning"]')).toContainText("6 published projects");
+    await expect(page.locator('a[href="/category/ai-machine-learning"]')).toContainText("7 published projects");
     await expectNoStore(categoriesResponse, "Categories route");
 
     const categoryResponse = await page.goto(url + "/category/developer-tools");
     await expect(page.getByRole("heading", { name: "Developer Tools" })).toBeVisible();
     await expect(page.getByText("6 matching projects")).toBeVisible();
+    await expectOnlyCategoryFixtures(page, [1, 2, 3, 4, 5, 6], 6);
     await expectNoStore(categoryResponse, "Category detail route");
+
+    const injectedCategoryResponse = await page.goto(url + "/category/developer-tools?category=ai-machine-learning");
+    await expect(page).toHaveURL(url + "/category/developer-tools");
+    await expect(page.getByText("6 matching projects")).toBeVisible();
+    await expectOnlyCategoryFixtures(page, [1, 2, 3, 4, 5, 6], 6);
+    await expect(page.locator(".filter-top .badge")).toHaveCount(0);
+    await expectNoStore(injectedCategoryResponse, "Category route with injected category");
+    check(!new URL(page.url()).searchParams.has("category"), "A single injected category parameter is removed from the canonical category URL.");
+
+    const multiCategoryUrl = url + "/category/developer-tools?category=ai-machine-learning&category=productivity&category=developer-tools"
+      + "&q=" + fixtureToken + "&license=MIT&language=TypeScript&sort=stars&page=1";
+    const multiCategoryResponse = await page.goto(multiCategoryUrl);
+    const normalizedCategoryUrl = new URL(page.url());
+    await expect(page).toHaveURL(url + "/category/developer-tools?q=" + fixtureToken + "&license=MIT&language=TypeScript&sort=stars");
+    await expect(page.getByText("3 matching projects")).toBeVisible();
+    await expectResultCount(page, 3);
+    await expectOnlyCategoryFixtures(page, [1, 3, 5], 3);
+    await expect(page.locator(".filter-top .badge")).toHaveText("2");
+    check(!normalizedCategoryUrl.searchParams.has("category") && normalizedCategoryUrl.searchParams.get("q") === fixtureToken
+      && normalizedCategoryUrl.searchParams.get("license") === "MIT"
+      && normalizedCategoryUrl.searchParams.get("language") === "TypeScript"
+      && normalizedCategoryUrl.searchParams.get("sort") === "stars"
+      && !normalizedCategoryUrl.searchParams.has("page"),
+    "Category URL normalization removes every category parameter while retaining valid filters and canonical page one.");
+    await expectNoStore(multiCategoryResponse, "Category route with multiple injected categories and additional filters");
+    await page.getByRole("button", { name: "Clear all" }).click();
+    await expect(page).toHaveURL(url + "/category/developer-tools");
+    await expect(page.getByText("6 matching projects")).toBeVisible();
+    await expectOnlyCategoryFixtures(page, [1, 2, 3, 4, 5, 6], 6);
+    check(true, "Clear filters returns to the fixed category and removes search, license, language, sort, page, and injected category state.");
+
+    const aiCategoryResponse = await page.goto(url + "/category/ai-machine-learning");
+    await expect(page.getByRole("heading", { name: "AI & Machine Learning" })).toBeVisible();
+    await expect(page.getByText("7 matching projects")).toBeVisible();
+    await expectOnlyCategoryFixtures(page, [1, 7, 8, 9, 10, 11, 12], 7);
+    await expectNoStore(aiCategoryResponse, "Overlapping category detail route");
+
+    const multiCategoryExplore = await page.goto(url + "/explore?q=" + fixtureToken + "&category=developer-tools&category=ai-machine-learning");
+    await expectResultCount(page, 12);
+    await expect(page.locator(".cards-grid .project-card")).toHaveCount(9);
+    await expectNoStore(multiCategoryExplore, "Explore with multiple category filters");
+    check(true, "Explore keeps OR semantics for multiple categories and returns each overlapping project once.");
 
     await page.goto(url + "/category/productivity");
     await expect(page.getByText("No published projects in this category yet", { exact: true })).toBeVisible();

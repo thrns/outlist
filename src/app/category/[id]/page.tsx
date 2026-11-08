@@ -23,7 +23,8 @@ export default async function Page({ params, searchParams }: {
   params: Promise<{ id: string }>;
   searchParams: Promise<DirectorySearchParams>;
 }) {
-  const [{ id }, state] = await Promise.all([params, searchParams.then(parseDirectoryState)]);
+  const [{ id }, rawSearchParams] = await Promise.all([params, searchParams]);
+  const state = { ...parseDirectoryState(rawSearchParams), categories: [] };
   let categories: PublicCatalogCategory[];
   let facets: PublicCatalogFacets;
   try {
@@ -33,6 +34,7 @@ export default async function Page({ params, searchParams }: {
   }
   const category = categories.find((item) => item.slug === id);
   if (!category) notFound();
+  if (rawSearchParams.category !== undefined) redirect(directoryUrl("/category/" + id, state));
 
   let results: PublicDirectoryResult;
   try {
