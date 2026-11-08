@@ -2,11 +2,19 @@ import "server-only";
 
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isValidProjectLogoStoragePath } from "@/lib/logos/resolve";
 
-const categorySchema = z.object({
+const categoryIconSchema = z.string().min(1).max(40);
+
+const categoryReferenceSchema = z.object({
   id: z.uuid(),
   slug: z.string().min(1).max(80),
   name: z.string().min(1).max(120),
+});
+
+const categorySchema = categoryReferenceSchema.extend({
+  description: z.string().max(500),
+  icon: categoryIconSchema,
 });
 
 const projectSchema = z.object({
@@ -16,9 +24,9 @@ const projectSchema = z.object({
   summary: z.string().max(280),
   descriptionExcerpt: z.string().max(600),
   officialWebsiteUrl: z.string().url().max(2048).nullable(),
-  publishedAt: z.iso.datetime(),
-  primaryCategory: categorySchema,
-  categories: z.array(categorySchema).max(20),
+  publishedAt: z.iso.datetime({ offset: true }),
+  primaryCategory: categoryReferenceSchema,
+  categories: z.array(categoryReferenceSchema).max(20),
   categoryIds: z.array(z.uuid()).max(20),
   categorySlugs: z.array(z.string().min(1).max(80)).max(20),
   tags: z.array(z.string().min(1).max(256)).max(50),
@@ -30,7 +38,7 @@ const projectSchema = z.object({
     stars: z.number().int().nonnegative().safe(),
     forks: z.number().int().nonnegative().safe(),
     primaryLanguage: z.string().max(50).nullable(),
-    activityAt: z.iso.datetime().nullable(),
+    activityAt: z.iso.datetime({ offset: true }).nullable(),
   }),
   license: z.object({
     identifier: z.string().min(1).max(64),
@@ -74,14 +82,26 @@ export type PublicCatalogSort = z.infer<typeof filtersSchema>["sort"];
 export type PublicCatalogProject = z.infer<typeof projectSchema>;
 export type PublicCatalogSearchResult = z.infer<typeof responseSchema>;
 export type PublicCatalogFilters = z.input<typeof filtersSchema>;
+export type PublicCatalogProjectView = Omit<PublicCatalogProject, "logo"> & {
+  logo: (NonNullable<PublicCatalogProject["logo"]> & { publicUrl: string }) | null;
+};
 
-export interface PublicCatalogCategory {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  icon: string;
+export type PublicCatalogCategory = z.infer<typeof categorySchema>;
+
+export interface PublicCatalogFacets {
+  categoryCounts: Array<{ slug: string; projectCount: number }>;
+  licenses: string[];
+  languages: string[];
 }
+
+const facetsSchema = z.object({
+  categoryCounts: z.array(z.object({
+    slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80),
+    projectCount: z.number().int().nonnegative().safe(),
+  })).max(200),
+  licenses: z.array(z.string().regex(/^[A-Za-z0-9.+-]{1,64}$/)).max(100),
+  languages: z.array(z.string().regex(/^[\p{L}\p{N}_+#.-]{1,50}$/u)).max(100),
+});
 
 export class PublicCatalogInputError extends Error {
   constructor(message: string) {
@@ -120,7 +140,8 @@ function parseFilters(input: PublicCatalogFilters): z.infer<typeof filtersSchema
 function parseResponse(value: unknown): PublicCatalogSearchResult {
   const parsed = responseSchema.safeParse(value);
   if (!parsed.success) {
-    throw new PublicCatalogQueryError("The public catalog returned a response outside its documented shape.");
+    const issuePaths = parsed.error.issues.map((issue) => `${issue.path.join(".")}:${issue.code}`).join(",");
+    throw new PublicCatalogQueryError(`The public catalog returned a response outside its documented shape (${issuePaths.slice(0, 200)}).`);
   }
   for (const item of parsed.data.items) {
     if (item.primaryCategory.id !== item.categoryIds[0]
@@ -185,13 +206,46 @@ export async function getPublicCategories(): Promise<PublicCatalogCategory[]> {
     throw new PublicCatalogQueryError(`Public category lookup failed (${error.code}): ${safeDatabaseMessage(error.message)}`, error.code);
   }
   return (data ?? []).map((category) => {
-    const parsed = categorySchema.safeParse(category);
-    if (!parsed.success) throw new PublicCatalogQueryError("The public category list returned invalid metadata.");
-    return {
-      ...parsed.data,
+    const parsed = categorySchema.safeParse({
+      id: category.id,
+      slug: category.slug,
+      name: category.name,
       description: category.description,
       icon: category.icon_identifier,
-    };
+    });
+    if (!parsed.success) throw new PublicCatalogQueryError("The public category list returned invalid metadata.");
+    return parsed.data;
+  });
+}
+
+/** Fetch compact, database-aggregated facets for the genuinely visible catalog. */
+export async function getPublicCatalogFacets(): Promise<PublicCatalogFacets> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("get_public_catalog_facets");
+  if (error) {
+    throw new PublicCatalogQueryError(`Public catalog facets failed (${error.code}): ${safeDatabaseMessage(error.message)}`, error.code);
+  }
+  const parsed = facetsSchema.safeParse(data);
+  if (!parsed.success) throw new PublicCatalogQueryError("The public catalog returned invalid filter metadata.");
+  return parsed.data;
+}
+
+/** Add only public Storage URLs derived from the approved, project-scoped path. */
+export async function withPublicProjectLogos<T extends PublicCatalogProject>(
+  projects: readonly T[],
+): Promise<Array<Omit<T, "logo"> & { logo: PublicCatalogProjectView["logo"] }>> {
+  const eligible = projects.filter((project) =>
+    project.logo && isValidProjectLogoStoragePath(project.id, project.logo.storagePath),
+  );
+  if (eligible.length === 0) return projects.map((project) => ({ ...project, logo: null }));
+  const supabase = await createSupabaseServerClient();
+  return projects.map((project) => {
+    const logo = project.logo;
+    if (!logo || !isValidProjectLogoStoragePath(project.id, logo.storagePath)) {
+      return { ...project, logo: null };
+    }
+    const { data } = supabase.storage.from("project-logos").getPublicUrl(logo.storagePath);
+    return { ...project, logo: { ...logo, publicUrl: data.publicUrl } };
   });
 }
 
@@ -201,4 +255,16 @@ export async function getPublicProjectBySlug(slug: string): Promise<PublicCatalo
   const filters = filtersSchema.parse({ sort: "newest", page: 1, pageSize: 1 });
   const result = await executeSearch(filters, slug);
   return result.items[0] ?? null;
+}
+
+/** Read the complete approved description through the same public RLS boundary. */
+export async function getPublicProjectDescriptionBySlug(slug: string): Promise<string | null> {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 120) return null;
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.from("projects").select("description").eq("slug", slug).maybeSingle();
+  if (error) {
+    throw new PublicCatalogQueryError(`Public project detail lookup failed (${error.code}): ${safeDatabaseMessage(error.message)}`, error.code);
+  }
+  if (data === null || typeof data.description !== "string") return null;
+  return data.description;
 }

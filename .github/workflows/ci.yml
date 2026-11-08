@@ -135,3 +135,31 @@ jobs:
       - name: Stop local Supabase services and remove volumes
         if: always()
         run: bun run supabase stop --no-backup >/dev/null 2>&1 || true
+
+  public-frontend-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install Chromium and its system dependencies
+        run: bunx playwright install --with-deps chromium
+      - name: Start disposable local Supabase
+        run: bun run supabase start
+      - name: Apply migrations to a clean local database
+        run: bun run supabase db reset
+      - name: Run the public frontend against local catalog fixtures
+        run: |
+          eval "$(./node_modules/.bin/supabase status -o env)"
+          NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
+          SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
+          bun run test:public-frontend-e2e
+      - name: Stop local Supabase services and remove volumes
+        if: always()
+        run: bun run supabase stop --no-backup >/dev/null 2>&1 || true

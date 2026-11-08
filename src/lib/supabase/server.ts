@@ -13,6 +13,11 @@ export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
 
   return createServerClient<Database>(url, publishableKey, {
+    global: {
+      // Public catalog reads must reflect current RLS visibility. In particular,
+      // a safety demotion must take effect on the next request.
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
     cookieOptions: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,

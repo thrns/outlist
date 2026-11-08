@@ -1,6 +1,7 @@
 # Roadmap
 
-This roadmap separates the current demo from planned platform capabilities.
+This roadmap records completed milestones, current limitations, and planned
+platform capabilities.
 
 ## M0-01 — Bun and Supabase foundation
 
@@ -296,9 +297,9 @@ This roadmap separates the current demo from planned platform capabilities.
 
 ### Remaining limitations after M1-07
 
-- Public project routes still use the illustrative JSON catalog. M1-08 adds
-  the PostgreSQL search API and typed accessors; M1-09 connects the current
-  interface without changing its design.
+- Public catalog UI integration is delivered in M1-09; public submissions and
+  alternatives remain unavailable until their persistence and query boundaries
+  are implemented.
 - Hosted migrations and live project publication have not been run. The audit
   is append-only and administrators have no general unpublish or destructive
   rollback action; confirmed primary-source access restrictions are handled by
@@ -323,24 +324,51 @@ This roadmap separates the current demo from planned platform capabilities.
 - Updated the README and architecture with the response contract, RLS, index
   strategy, pagination, empty-catalog behavior, logo policy, and verified
   versus unverified performance claims. No hosted migration, data import,
-  deployment, merge, or M1-09 UI replacement is included.
+  deployment, or merge is included.
 
 ### Remaining limitations after M1-08
 
-- Public pages and their JSON demo records remain unchanged. M1-09 will wire
-  those pages to the new public catalog accessors.
-- Trending remains unavailable until repository snapshots establish enough
-  comparable history for a defensible calculation. Hosted latency and
+- Public pages are wired to the public catalog in M1-09. Hosted latency and
   production data distribution have not been measured.
+- Trending remains unavailable until repository snapshots establish enough
+  comparable history for a defensible calculation.
+
+## M1-09 — Live Supabase public catalog UI (implemented)
+
+- Connected home, explore, category index/detail, and project detail routes to
+  published Supabase records through the existing public RLS API.
+- Added URL-backed combined filters, sorting, short-query handling, exact
+  totals, database pagination, bounded active-category counts, and command
+  search. Empty and unavailable database states never show sample projects.
+- Added canonical slug details and metadata, complete source-backed descriptions,
+  public related-project lookup, and approved Storage logos with explicit avatar
+  attribution and deterministic fallback.
+- Removed browser-local publication and submission demonstrations. Appearance
+  is the only persisted public UI preference; alternatives and public submission
+  routes clearly state they are unavailable. The existing authenticated admin
+  editor remains intact.
+- Added local Supabase and Playwright public frontend coverage to CI, including
+  safety demotion freshness. No hosted migration, publication, deployment, or
+  merge is included.
+
+### Remaining limitations after M1-09
+
+- Public alternatives need an approved relationship query, and public
+  submissions need persistent storage and moderation before either route can
+  accept or claim live data.
+- Featured flags are not included in the public catalog query, so the homepage
+  uses recent and most-starred sections without trending or featured claims.
+- Hosted Supabase configuration, production catalog contents, and production
+  latency have not been verified.
 
 ## Later milestones
 
-- M1-09 — Connect the existing public UI to published PostgreSQL records.
 - Add a validated public submission/correction endpoint after abuse controls
   and review handling are designed.
 - Add recurring enrichment only after operational limits and quality controls
   are established.
 
 The local schema, bounded ingestion pilot, authenticated editorial publishing,
-and public PostgreSQL search/access layer are implemented. Hosted Supabase
-deployment and public UI integration remain future work.
+public PostgreSQL search/access layer, and live public catalog UI are
+implemented. Hosted Supabase deployment and public UI integration remain
+unverified.

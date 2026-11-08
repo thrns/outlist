@@ -278,6 +278,20 @@ values
     assert(common.totalCount === 1000 && common.items.length === 50 && common.hasMore,
       "The search endpoint must count and paginate 1,000 published fixtures without unpublished or restricted rows.");
 
+    const rawFacets = await must(anonymous.rpc("get_public_catalog_facets"), "Anonymous public catalog facets");
+    const facets = rawFacets as unknown as {
+      categoryCounts: Array<{ slug: string; projectCount: number }>;
+      licenses: string[];
+      languages: string[];
+    };
+    assert(facets.categoryCounts.find((item) => item.slug === "developer-tools")?.projectCount === 500
+      && facets.categoryCounts.find((item) => item.slug === "ai-machine-learning")?.projectCount === 501,
+    "Bounded category facets count only published, safe projects in each active category.");
+    assert(facets.licenses.includes("MIT") && facets.licenses.includes("Apache-2.0")
+      && facets.languages.some((value) => value.toLowerCase() === "typescript")
+      && facets.languages.some((value) => value.toLowerCase() === "python"),
+    "Facet options reflect the visible projects' verified licenses and primary languages.");
+
     const exact = await search({ p_query: `M108 ${token} Alpha`, p_page_size: 20 });
     assert(exact.items[0]?.slug === projectSlug(1), "Exact project-name matches must rank first.");
     const partial = await search({ p_query: `M108 ${token} Alph`, p_page_size: 20 });

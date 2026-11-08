@@ -3,19 +3,20 @@
 ## Current implementation
 
 Outlist is a Next.js 16 App Router modular monolith using React 19, TypeScript,
-Tailwind CSS, and component-based routes. The existing home, explore, category,
-project, alternatives, submission, and demo admin pages render from the
-committed 33-project JSON catalog. The demo's editable state is persisted in
-browser `localStorage`.
+Tailwind CSS, and component-based routes. The home, explore, category, and
+project routes read published Supabase records through the public RLS boundary.
+Alternatives and submissions show honest unavailable states until their public
+data workflows exist. Appearance preference is the only directory state
+persisted in browser `localStorage`.
 
 Supabase infrastructure now includes separated browser, SSR server, and
 privileged server clients, Zod configuration validation, versioned SQL
 migrations, a normalized PostgreSQL catalog, database policies, and a
-`project-logos` Storage bucket. Public UI still reads the committed 33-project
-JSON catalog. A server-only, typed public catalog library now exposes the
-database path reserved for M1-09 integration. The admin route uses Supabase Auth
-for invite-only OTP sign-in and has a separate Supabase-backed editorial review
-and publication workflow.
+`project-logos` Storage bucket. Server-rendered public routes use the
+server-only typed catalog library with the publishable key; browser search uses
+a bounded route handler. The admin route uses Supabase Auth for invite-only OTP
+sign-in and has a separate Supabase-backed editorial review and publication
+workflow.
 A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
@@ -289,8 +290,42 @@ indexes. Indexed plan probes confirm that the stored-vector GIN and name
 trigram paths are available. Hosted latency and production data distribution
 remain unmeasured. The schema can store daily repository snapshots, but the
 available history does not establish a defensible trending interval, so
-trending is not supported. M1-08 does not replace demo JSON or wire public
-pages to this library; that stays in M1-09.
+trending is not supported. M1-09 connects the public pages to this library.
+
+## M1-09 public catalog frontend
+
+`/`, `/explore`, `/categories`, `/category/[slug]`, and `/project/[slug]` use
+published catalog queries on the server. Each route is dynamic and the Supabase
+SSR client forces upstream `fetch` requests to `no-store`, so a safety demotion
+or unpublished project is reflected on the next request. Public routes use the
+publishable key and existing RLS; no service-role credential is included in
+public page access. Configured query failures render a clear error state, and
+empty databases render genuine empty states without JSON fallback.
+Project and category slug routes do not stream a global loading fallback before
+their visibility checks; missing or unpublished slugs return HTTP 404 responses.
+
+Explore state is encoded in repeated URL parameters for query, categories,
+licenses, languages, sort, and page. Search and pagination are bounded by the
+public RPC. A `SECURITY INVOKER` facet RPC returns visible-project category
+counts and bounded distinct filter options without transferring the catalog.
+The command search route requests at most seven projects and three active
+categories. Short queries explain the database's three-character minimum.
+
+Project detail descriptions are fetched through a narrow public-RLS lookup.
+Related projects come from public category search. Logo rendering accepts only
+approved project-scoped `project-logos` paths from the catalog response; it
+preserves owner-avatar labeling and falls back to deterministic initials when
+an approved image is missing or fails. Dynamic metadata and 404 responses use
+the canonical database slug.
+
+The homepage displays real recent and most-starred projects and active
+categories. It makes no trending or featured claim. Alternatives remain a
+coming-soon state because no safe public relationship query exists. Submission
+is explicitly unavailable because persistent public moderation is not part of
+this milestone. The authenticated `/admin` workflow remains database-backed.
+The local public frontend Playwright suite covers live catalog visibility,
+filters and URL navigation, pagination, details, logos, safety demotion,
+unavailability, and anonymous write denial in CI.
 
 ## Local setup
 
@@ -303,7 +338,8 @@ and lint with `bun run supabase:db-lint`. Generate types after migrations with
 `bun run supabase stop` shuts services down. Run
 `bun run test:discovery-db`, `bun run test:enrichment-db`, and
 `bun run test:assessment-db`, `bun run test:editorial-db`, and
-`bun run test:public-search-db` against disposable local Supabase. The assessment
+`bun run test:public-search-db` and `bun run test:public-frontend-e2e` against
+disposable local Supabase. The assessment
 test executes the real CLI through PostgREST using deterministic GitHub HTTP
 fixtures, then checks draft creation, review queue linkage, idempotency,
 rename handling, editorial preservation, and ordinary-client denial. No

@@ -774,6 +774,9 @@ isOneToOne: false
 "finish_github_repository_assessment_job":
 { Args: { "p_job_id": string }; Returns: Json
                            },
+"get_public_catalog_facets":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "list_project_logo_cleanup_attempts":
 { Args: { "p_logo_id": string }; Returns: Json
                            },

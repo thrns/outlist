@@ -1,9 +1,9 @@
 # Outlist
 
 Outlist is an open-source discovery directory built as a Next.js 16 modular
-monolith. The current app is a local demo with a curated sample catalog. Bun is
-the package manager and runtime; Supabase clients and the local CLI workflow
-provide the foundation for later milestones.
+monolith. Its public catalog routes read published projects from Supabase;
+authenticated editorial tools review and publish catalog records. Bun is the
+package manager and runtime.
 
 ## Requirements
 
@@ -19,10 +19,21 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The demo runs without
-Supabase credentials. Supabase clients validate their required configuration
-only when called, so an unconfigured project can still build and render the
-existing routes.
+Public catalog routes require `NEXT_PUBLIC_SUPABASE_URL` and
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. To use local Supabase, start and seed
+the database, copy the local API URL and anon key from `bun run supabase status`
+into `.env.local`, then start the app:
+
+```bash
+bun run supabase start
+bun run supabase db reset
+bun run supabase status
+bun run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). If the public database is
+unconfigured or unavailable, catalog pages show an explicit error state and
+never fall back to sample projects.
 
 ## Commands
 
@@ -41,6 +52,7 @@ existing routes.
 | `bun run test:logos-db` | Exercise real logo discovery, approval, and public Storage against local Supabase |
 | `bun run test:editorial-db` | Exercise real authenticated editorial decisions and publication against local Supabase |
 | `bun run test:public-search-db` | Verify anonymous search, filters, sorts, pagination, logo selection, RLS, and indexed query plans against local Supabase |
+| `bun run test:public-frontend-e2e` | Verify live public routes, catalog filters, URL state, logos, safety demotion, and browser behavior with local Supabase and Chromium |
 | `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
@@ -76,24 +88,26 @@ existing routes.
 `bun.lock` is the committed dependency lockfile. Do not commit other package
 manager lockfiles.
 
-## Existing demo
+## Public routes and remaining unavailable features
 
-- `/` — Home, hero search, featured projects, trending/recent, categories
+- `/` — Home with genuine recent and most-starred projects and active categories
 - `/explore` — Search, category/license/language filters, sorting, pagination
-- `/categories` and `/category/[id]` — Category directory and filtered listings
-- `/project/[id]` — Project details and related projects
-- `/alternatives` — Browse proprietary-software alternatives
-- `/submit` — Browser-local submission queue
+- `/categories` and `/category/[slug]` — Active database categories, visible project counts, and filtered listings
+- `/project/[slug]` — Published project details and related published projects
+- `/alternatives` — Coming soon until approved public relationships can be queried
+- `/submit` — Unavailable until persistent submission moderation is implemented
 - `/admin/login` — Invite-only administrator email OTP sign-in
 - `/admin` — Protected, paginated Supabase-backed editorial review queue
 - `/admin/projects/[id]` — Private source evidence, assessments, editorial corrections, decisions, and publishing
 
-The public directory still renders the committed 33-project JSON demo, and its
-sample metrics are illustrative. Submission forms remain browser-local. The
-admin review queue is separate: it reads actual database drafts and private
-evidence on the server, and its actions write through service-role-only
-PostgreSQL functions after a fresh administrator allowlist check. Assessment
-creates pending-review drafts but never verifies a license or quality. See
+All listed public catalog routes use published Supabase records under public
+RLS. Search and filters are database-paginated and encoded in the URL; there is
+no JSON catalog fallback. Trending scores, public alternatives, and persistent
+public submissions are unavailable. The admin review queue is separate: it
+reads actual database drafts and private evidence on the server, and its
+actions write through service-role-only PostgreSQL functions after a fresh
+administrator allowlist check. Assessment creates pending-review drafts but
+never verifies a license or quality. See
 [ADMIN_AUTH.md](ADMIN_AUTH.md) for OTP setup and administrator provisioning,
 and [DATA_PIPELINE.md](DATA_PIPELINE.md) for editorial evidence and publication
 policy.
@@ -159,9 +173,9 @@ unavailable to public roles.
 Authenticated users have the same read-only catalog access as anonymous users.
 
 The local database integration creates and removes 1,003 temporary projects
-and checks anonymous RPC access and direct RLS boundaries. The public pages
-still render the original demo JSON. Wiring those pages to the new access
-library is M1-09.
+and checks anonymous RPC access and direct RLS boundaries. M1-09 connects the
+public routes to this access library and adds a local Supabase plus Playwright
+browser suite to CI.
 
 ## Supabase local development
 
@@ -248,8 +262,8 @@ confirmed missing object, and refuses digest mismatches. Legacy approved paths
 remain valid; old records without digests require manual review before a
 missing object can be restored. Public bucket URLs are not access control, and
 random attempt paths are not confidential. See [Data pipeline](DATA_PIPELINE.md)
-for recovery and exposure details. The demo UI keeps its existing letter
-fallback; no public UI redesign is part of M1-05.
+for recovery and exposure details. M1-05 kept the existing letter fallback;
+M1-09 now renders approved stored logos within the current design.
 
 ### M1-06 operator runbook
 
@@ -455,12 +469,11 @@ not part of CI.
 - [Data pipeline](DATA_PIPELINE.md) distinguishes candidates, enriched repositories, and published projects.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
-The public demo routes still render sample JSON and do not query the database.
-M1-08 adds the PostgreSQL search RPC and typed server accessors while preserving
-that demo for M1-09. Hosted Supabase configuration, production catalog contents,
-and SMTP delivery remain unverified. CI validates local migrations, search and
-editorial integration, database grants and RLS, generated type parity, and
-isolated Chromium flows without hosted credentials.
+Public catalog routes require configured Supabase credentials and use the
+published catalog with RLS. Hosted Supabase configuration, production catalog
+contents, and SMTP delivery remain unverified. CI validates local migrations,
+search and editorial integration, database grants and RLS, generated type
+parity, and isolated Chromium flows without hosted credentials.
 
 ## Environment variables
 

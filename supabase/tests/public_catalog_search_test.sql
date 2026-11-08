@@ -18,6 +18,12 @@ select ok(
   'public catalog reads do not require or grant the service role'
 );
 select ok(
+  not (select prosecdef from pg_proc where oid = 'public.get_public_catalog_facets()'::regprocedure)
+    and has_function_privilege('anon', 'public.get_public_catalog_facets()', 'EXECUTE')
+    and has_function_privilege('authenticated', 'public.get_public_catalog_facets()', 'EXECUTE'),
+  'public catalog facets run as the caller and are available to public roles'
+);
+select ok(
   not has_table_privilege('anon', 'public.projects', 'INSERT')
     and not has_table_privilege('anon', 'public.projects', 'UPDATE')
     and not has_table_privilege('anon', 'public.projects', 'DELETE'),
@@ -116,6 +122,12 @@ select is(
 select is(
   (select count(*)::integer from public.repositories where project_id = 'a8000000-0000-4000-8000-000000000001'),
   0, 'repository RLS hides non-public repository state'
+);
+select is(
+  (select (item->>'projectCount')::integer
+   from pg_catalog.jsonb_array_elements(public.get_public_catalog_facets()->'categoryCounts') item
+   where item->>'slug' = 'developer-tools'),
+  0, 'facet category counts exclude published-looking projects with restricted sources'
 );
 reset role;
 
