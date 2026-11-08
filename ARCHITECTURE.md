@@ -20,10 +20,11 @@ workflow.
 A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
-unreviewed candidates and durable checkpoints to Supabase. The public UI still
-does not use the database. M1-03 adds a separate, restartable GitHub
-enrichment worker that normalizes candidate source metadata into canonical
-repository tables without creating projects. M1-04 adds a private assessment
+unreviewed candidates and durable checkpoints to Supabase. Public routes read
+published catalog records through public RLS; ingestion remains separate.
+M1-03 adds a separate, restartable GitHub enrichment worker that normalizes
+candidate source metadata into canonical repository tables without creating
+projects. M1-04 adds a private assessment
 worker that turns successfully enriched repositories into explainable
 assessments and pending-review drafts through a single transaction. M1-05 adds
 pending logo candidates, and M1-06 composes all four existing workers through

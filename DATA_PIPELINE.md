@@ -2,19 +2,26 @@
 
 ## Current behavior
 
-The public catalog is the checked-in `src/data/projects.json` sample set. It
-contains 33 illustrative project records and is validated by
-`bun run validate:data` and Vitest. Public pages still search and sort this data
-in the browser. Submission remains local demo behavior. The `/admin` editorial
-queue and project-review page read and update real Supabase drafts.
+- The public homepage, Explore, category index and detail, and project detail
+  routes use published Supabase records under public RLS.
+- The checked-in `src/data/projects.json` catalog contains 33 illustrative
+  records retained for testing and validation only. Public pages have no JSON
+  fallback.
+- `/admin` uses the authenticated, database-backed editorial review and
+  publication workflow.
+- `/submit` is unavailable and does not persist submissions. `/alternatives`
+  is unavailable pending approved public relationships.
+- The ingestion pipeline is manually operated. No hosted migration, real
+  hosted ingestion, publication, or deployment has occurred.
 
-The production schema starts with no project listings. The only seeded rows
-are the 11 category taxonomy records. M1-01 adds a read-only GitHub REST API
-adapter. M1-02 adds a bounded repository discovery worker that writes private,
-unreviewed candidates and durable page checkpoints. M1-03 enriches and
-assesses eligible public repositories into unpublished drafts. M1-05 adds
-reviewed logo candidates without changing publication, license, or quality
-decisions.
+## Architecture summary
+
+PostgreSQL is the source of truth for the public catalog. Bounded GitHub
+discovery, enrichment, assessment, and logo-processing workers create private
+candidates and pending-review drafts. Authenticated administrators review
+evidence and publish approved projects, which then become visible through
+public RLS. The production schema starts with no project listings; only the 11
+category taxonomy records are seeded.
 
 ## M1-01 GitHub source adapter
 
@@ -562,11 +569,13 @@ bun run logos -- --revoke <logo-id> --execute
 bun run logos -- --reconcile <logo-id>
 ```
 
-The current public UI remains local demo data and does not query `project_logos`.
-The resolver is ready for later UI integration; no browser approval API,
-frontend redesign, recurring discovery, automatic publication, or user uploads
-are included. GitHub observations and local Supabase Storage integration use
-deterministic fixtures in CI and need no live GitHub or hosted Supabase account.
+At the M1-05 milestone, the public UI still used local demo data and did not
+query `project_logos`. M1-09 later connected public routes to published
+Supabase records, including approved project logos and deterministic letter
+fallbacks. M1-05 did not add a browser approval API, recurring discovery,
+automatic publication, or user uploads. GitHub observations and local Supabase
+Storage integration use deterministic fixtures in CI and need no live GitHub
+or hosted Supabase account.
 
 ## Database workflow
 
@@ -584,9 +593,9 @@ bun run supabase stop
 `db reset` is a destructive reset of the local database. Migrations under
 `supabase/migrations/` are the single schema source of truth; the category seed
 uses an upsert and can be re-applied without adding duplicate rows. The
-illustrative `src/data/projects.json` and `src/data/categories.json` remain in
-place for demo compatibility; no sample project is imported into production
-tables.
+illustrative `src/data/projects.json` and `src/data/categories.json` remain
+checked in for catalog tests and data validation; no sample project is imported
+into production tables.
 
 Run `bun run supabase:db-test` for pgTAP authorization, integrity, transaction,
 checkpoint, incompatible-registration, retry, lease fencing, and RLS tests.
