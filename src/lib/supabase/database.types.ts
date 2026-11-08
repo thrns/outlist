@@ -798,6 +798,9 @@ isOneToOne: false
 "release_project_logo_approval":
 { Args: { "p_approval_token": string,"p_logo_id": string,"p_worker_id": string }; Returns: Json
                            },
+"search_public_projects":
+{ Args: { "p_categories"?: (string)[],"p_languages"?: (string)[],"p_licenses"?: (string)[],"p_page"?: number,"p_page_size"?: number,"p_query"?: string,"p_slug"?: string,"p_sort"?: string }; Returns: Json
+                           },
 "set_project_logo_review_status":
 { Args: { "p_logo_id": string,"p_status": string }; Returns: Json
                            },

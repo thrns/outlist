@@ -12,8 +12,10 @@ Supabase infrastructure now includes separated browser, SSR server, and
 privileged server clients, Zod configuration validation, versioned SQL
 migrations, a normalized PostgreSQL catalog, database policies, and a
 `project-logos` Storage bucket. Public UI still reads the committed 33-project
-JSON catalog. The admin route uses Supabase Auth for invite-only OTP sign-in
-and has a separate Supabase-backed editorial review and publication workflow.
+JSON catalog. A server-only, typed public catalog library now exposes the
+database path reserved for M1-09 integration. The admin route uses Supabase Auth
+for invite-only OTP sign-in and has a separate Supabase-backed editorial review
+and publication workflow.
 A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
@@ -35,6 +37,7 @@ atomic service-role-only publication.
 Browser
   └─ Next.js UI and route handlers / server actions
        ├─ Supabase SSR client: publishable key + request cookies
+       ├─ Public catalog access: invoker search RPC + read-only RLS queries
        ├─ Admin Proxy: verified claims refresh for /admin routes only
        ├─ Admin server gate: verified Auth UUID + fresh admin_users lookup
        ├─ Editorial Server Actions: fresh allowlist check + strict Zod inputs
@@ -60,7 +63,7 @@ Standalone Bun operator (M1-06)
 ```
 
 The browser/server clients and database schema are implemented, but the public
-website does not use them yet. The GitHub adapter reads repository metadata by
+pages do not use the database yet. The GitHub adapter reads repository metadata by
 path or stable numeric repository ID, languages, topics, detected license
 metadata, releases, repository search results, and rate-limit status. Search
 results use an endpoint-specific schema because GitHub's Search API does not
@@ -98,11 +101,11 @@ subresource's prior valid data. Expired claims can be reclaimed; stale workers
 cannot commit. Source ETags are retained but conditional reuse is disabled
 until validated cached response support exists. Enrichment does not write
 `projects`; assessment creates only `pending_review` drafts when category
-evidence supports a primary category. License detection remains unverified
-and quality remains unreviewed. Editorial approval and publication remain
-later work. PostgreSQL owns normalized catalog data and
-the indexed search document; M2-01 will add the public search RPC. Storage
-remains limited to approved logo assets.
+evidence supports a primary category. At assessment time, license detection
+remains unverified and quality remains unreviewed; M1-07 requires separate
+human decisions before publication. PostgreSQL owns normalized catalog data
+and the indexed search document. M1-08 adds public PostgreSQL search; M1-09
+connects the public pages. Storage remains limited to approved logo assets.
 
 Enrichment accepts repository metadata only when GitHub's response indicates
 public visibility. A private flag, explicit non-public visibility, or
@@ -235,6 +238,60 @@ schema drift. The enrichment migration adds canonical source fields, compact
 resource provenance, release observation times, and candidate queue state;
 the five mutation RPCs are executable only by `service_role`.
 
+## M1-08 public catalog read path
+
+`src/lib/catalog/public.ts` is a server-only, typed adapter over the existing
+cookie-aware SSR client and `@supabase/supabase-js`. Search uses only the
+publishable key, so anonymous requests execute under `anon` and signed-in
+requests execute under `authenticated`. No public catalog read uses
+`SUPABASE_SECRET_KEY`.
+
+`public.search_public_projects` is a `STABLE SECURITY INVOKER` RPC. It validates
+the query (3–120 characters, at most eight terms), selected filters (up to 20
+values per group), sort (five allowlisted values), page (1–1,000), and page size
+(1–50) before planning bounded database pagination. Category, verified-license,
+and primary-language filters use OR within each group and AND between groups.
+Text search combines the weighted stored English `tsvector` with trigram name
+and summary matching. Exact and prefix names receive higher rank than partial
+names, summaries, and descriptions. Result arrays are aggregated in one
+database statement, with at most 50 projects, 20 categories and 50 tags per
+project, a 600-character description excerpt, and one selected logo.
+
+The search RPC orders results deterministically using a UUID tie-breaker. The
+supported values are `relevance`, `stars`, `updated`, `newest`, and `name`.
+`relevance` with no query uses newest publication first. Offset pages remain
+stable when records do not change; changes between requests can shift page
+membership. Counts are exact for each request, including empty results.
+
+The migration tightens project and repository RLS. A private, narrowly scoped
+boolean predicate checks verified publication, quality, licensing, and the
+primary repository’s source visibility without exposing private columns or
+causing recursive policies. Public search also requires an active category.
+Repository row policies require the primary repository to be available and
+explicitly public, non-private, non-disabled, recently observed, and to have a
+present visibility field. Search continues to run as the caller and reads no
+source payload, candidate, reviewer, admin, or editorial audit table. Public
+and authenticated roles remain read-only.
+
+Approved official, editorial, and submitted logos take priority over approved
+provider avatars. The result preserves avatar type and attribution; pending,
+rejected, and revoked rows are not selected. The RPC returns the safe
+project-scoped Storage path, or deterministic fallback metadata when no
+approved logo exists. The slug accessor uses the same public RLS boundary and
+returns `null` for invalid, unknown, unpublished, or repository-restricted
+slugs. Active category lookup returns at most 200 items.
+
+The search integration builds 1,000 published records plus draft, rejected, and
+restricted fixtures, analyzes the fixture tables, and removes them. At 1,003
+local project rows, ordinary `EXPLAIN` selects sequential scans for full-text
+and partial-name probes and uses the selective license and repository-language
+indexes. Indexed plan probes confirm that the stored-vector GIN and name
+trigram paths are available. Hosted latency and production data distribution
+remain unmeasured. The schema can store daily repository snapshots, but the
+available history does not establish a defensible trending interval, so
+trending is not supported. M1-08 does not replace demo JSON or wire public
+pages to this library; that stays in M1-09.
+
 ## Local setup
 
 Install dependencies with `bun install --frozen-lockfile`. With Docker Desktop,
@@ -245,7 +302,8 @@ and lint with `bun run supabase:db-lint`. Generate types after migrations with
 `bun run supabase:types`. `bun run supabase status` prints local keys and
 `bun run supabase stop` shuts services down. Run
 `bun run test:discovery-db`, `bun run test:enrichment-db`, and
-`bun run test:assessment-db` against disposable local Supabase. The assessment
+`bun run test:assessment-db`, `bun run test:editorial-db`, and
+`bun run test:public-search-db` against disposable local Supabase. The assessment
 test executes the real CLI through PostgREST using deterministic GitHub HTTP
 fixtures, then checks draft creation, review queue linkage, idempotency,
 rename handling, editorial preservation, and ordinary-client denial. No

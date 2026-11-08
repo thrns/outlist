@@ -40,6 +40,7 @@ existing routes.
 | `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
 | `bun run test:logos-db` | Exercise real logo discovery, approval, and public Storage against local Supabase |
 | `bun run test:editorial-db` | Exercise real authenticated editorial decisions and publication against local Supabase |
+| `bun run test:public-search-db` | Verify anonymous search, filters, sorts, pagination, logo selection, RLS, and indexed query plans against local Supabase |
 | `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
@@ -99,6 +100,68 @@ policy.
 
 The pipeline stages are distinct: **discovered candidate ≠ enriched
 repository ≠ assessed project draft ≠ published project**.
+
+## Public catalog search (M1-08)
+
+The `public.search_public_projects` PostgreSQL RPC and server-only library in
+[`src/lib/catalog/public.ts`](src/lib/catalog/public.ts) read real published
+records through the publishable Supabase key and public RLS. They never use the
+service-role credential. Available functions are `searchPublicProjects`,
+`getPublicProjectBySlug`, and `getPublicCategories`. Query failures are surfaced
+as typed errors; the library does not fall back to JSON when Supabase is
+configured but unavailable. An empty catalog returns an empty page with a zero
+total count.
+
+`searchPublicProjects` accepts `query`, `categories` (category slugs),
+`licenses` (verified identifiers), `languages` (primary language names),
+`sort`, `page`, and `pageSize`. Text is optional; non-empty queries must be 3 to
+120 characters and contain at most eight whitespace-separated terms. Each
+filter group accepts up to 20 values. Pages are one-based, capped at 1,000,
+with a page size from 1 to 50. Oversized and malformed arguments fail with a
+validation error rather than expanding an unbounded query.
+
+Selected values use OR within a category, license, or language group; separate
+groups combine with AND, and all selected groups combine with the text query.
+Search uses the stored English `tsvector` with its existing GIN index and the
+existing trigram indexes for partial or misspelled names and summaries. Exact
+and prefix name matches rank above partial name matches, which rank above
+summary and description matches. Query words are combined with AND semantics.
+
+Supported sorts are `relevance`, `stars`, `updated`, `newest`, and `name`. Every
+sort has a project UUID tie-breaker. Relevance without a text query falls back
+to publication date. Pagination and exact total counts run in PostgreSQL; page
+membership is stable for unchanged records. Inserts or updates between page
+requests can change offset-based page membership. There is no trending sort:
+the snapshot table can store history, but the available repository history has
+not established a defensible trending window.
+
+Each result includes a bounded description excerpt, primary and full category
+identity, tags, primary repository identity and metrics, verified license ID,
+publication and activity times, and fallback initials/seed. Only approved
+logos with project-scoped Storage paths are eligible. Approved official,
+editorial, and submitted logos are preferred before approved owner avatars;
+avatars retain an explicit avatar type and attribution. Pending, rejected, and
+revoked assets are omitted, and records without an approved asset include
+deterministic letter-fallback metadata.
+
+At 1,003 local project rows, PostgreSQL chooses sequential scans for full-text
+and partial-name probes and naturally uses the selective license and language
+indexes. Separate indexed plan probes confirm available GIN and trigram paths.
+This verifies index eligibility on local data; hosted latency and larger
+production distributions have not been measured.
+
+Public RLS exposes only published projects with verified quality and license
+and a current available primary GitHub repository whose source state explicitly
+says public, non-private, and non-disabled. Search and detail results also
+require an active category. Private source-state columns, provenance payloads,
+candidates, reviewer identities, admin rows, and editorial audit rows remain
+unavailable to public roles.
+Authenticated users have the same read-only catalog access as anonymous users.
+
+The local database integration creates and removes 1,003 temporary projects
+and checks anonymous RPC access and direct RLS boundaries. The public pages
+still render the original demo JSON. Wiring those pages to the new access
+library is M1-09.
 
 ## Supabase local development
 
@@ -393,13 +456,11 @@ not part of CI.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
 The public demo routes still render sample JSON and do not query the database.
-M1-07 adds a separate authenticated review workflow for real Supabase drafts;
-it does not connect public search or project pages to the production catalog.
-Hosted Supabase configuration and SMTP delivery remain unverified. The next
-milestones are PostgreSQL-backed catalog search and connecting the existing
-public Outlist interface to that search. CI validates the app, local migrations,
-database grants and RLS, real local Auth and PostgreSQL editorial decisions,
-and isolated Chromium flows without hosted credentials.
+M1-08 adds the PostgreSQL search RPC and typed server accessors while preserving
+that demo for M1-09. Hosted Supabase configuration, production catalog contents,
+and SMTP delivery remain unverified. CI validates local migrations, search and
+editorial integration, database grants and RLS, generated type parity, and
+isolated Chromium flows without hosted credentials.
 
 ## Environment variables
 

@@ -16,6 +16,7 @@
     "test:assessment-db": "bun --conditions=react-server scripts/assessment-db-integration.ts",
     "test:logos-db": "bun --conditions=react-server scripts/logos-db-integration.ts",
     "test:editorial-db": "bun --conditions=react-server scripts/editorial-publication-db-integration.ts",
+    "test:public-search-db": "bun --conditions=react-server scripts/public-search-db-integration.ts",
     "github:inspect": "bun --bun scripts/github-inspect.ts",
     "github:smoke": "bun --bun scripts/github-inspect.ts --live-smoke",
     "discover": "bun --conditions=react-server scripts/discover.ts",

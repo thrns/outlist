@@ -177,9 +177,9 @@ This roadmap separates the current demo from planned platform capabilities.
   assessment. Custom and compound license expressions require editorial review.
 - Category mappings are deliberately small, deterministic rules. They can
   return no category or conflicting evidence and never generate descriptions.
-- The assessment CLI is manual and serial. Scheduling, controlled editorial
-  approval, public search, and database-backed frontend integration
-  remain later milestones.
+- The assessment CLI is manual and serial. Recurring scheduling and
+  database-backed frontend integration remain later milestones. Public search
+  is delivered in M1-08; connecting the interface remains M1-09.
 
 ## M1-05 — Project logo acquisition, verification, and fallbacks (implemented)
 
@@ -296,23 +296,51 @@ This roadmap separates the current demo from planned platform capabilities.
 
 ### Remaining limitations after M1-07
 
-- Public project routes and search still use the illustrative JSON catalog;
-  the immediate next milestones are PostgreSQL-backed catalog search and
-  connecting the existing public Outlist interface to that search.
+- Public project routes still use the illustrative JSON catalog. M1-08 adds
+  the PostgreSQL search API and typed accessors; M1-09 connects the current
+  interface without changing its design.
 - Hosted migrations and live project publication have not been run. The audit
   is append-only and administrators have no general unpublish or destructive
   rollback action; confirmed primary-source access restrictions are handled by
   the narrow system safety demotion described above.
 
+## M1-08 — Production public catalog search (implemented)
+
+- Added `search_public_projects`, a bounded `SECURITY INVOKER` PostgreSQL RPC
+  using public RLS, the existing full-text and trigram indexes, database-level
+  pagination, exact totals, five deterministic sort orders, and OR-within /
+  AND-across filter groups.
+- Tightened project and repository RLS so public project reads require verified
+  quality, licensing, and a current available primary repository with
+  explicitly public, non-private, non-disabled source state. Search and detail
+  results also require an active category.
+- Added server-only typed accessors for search, published slug lookup, and
+  active categories. Public reads use the publishable key; no service-role
+  credential or JSON fallback is used by the access library.
+- Added UI-ready bounded project metadata, approved logo selection with owner
+  avatar attribution, deterministic letter fallback, pgTAP security checks,
+  and a disposable local 1,000-project integration with query-plan probes.
+- Updated the README and architecture with the response contract, RLS, index
+  strategy, pagination, empty-catalog behavior, logo policy, and verified
+  versus unverified performance claims. No hosted migration, data import,
+  deployment, merge, or M1-09 UI replacement is included.
+
+### Remaining limitations after M1-08
+
+- Public pages and their JSON demo records remain unchanged. M1-09 will wire
+  those pages to the new public catalog accessors.
+- Trending remains unavailable until repository snapshots establish enough
+  comparable history for a defensible calculation. Hosted latency and
+  production data distribution have not been measured.
+
 ## Later milestones
 
-- Add PostgreSQL-powered catalog search and connect the existing public UI to
-  published records.
+- M1-09 — Connect the existing public UI to published PostgreSQL records.
 - Add a validated public submission/correction endpoint after abuse controls
   and review handling are designed.
 - Add recurring enrichment only after operational limits and quality controls
   are established.
 
-The local schema, bounded ingestion pilot, and authenticated editorial
-publishing workflow are implemented. Hosted Supabase deployment, public
-database-backed catalog search, and frontend integration remain future work.
+The local schema, bounded ingestion pilot, authenticated editorial publishing,
+and public PostgreSQL search/access layer are implemented. Hosted Supabase
+deployment and public UI integration remain future work.

@@ -72,24 +72,26 @@ select ok(
 -- Fixtures are deliberately limited to this rolled-back test transaction.
 insert into public.projects (
   id, slug, name, summary, description, license_status, license_identifier,
-  license_verified_at, quality_status
+  license_verified_at, quality_status, last_verified_at
 ) values
-  ('00000000-0000-4000-8000-000000000001', 'published-fixture', 'Published Fixture', 'A published test listing.', 'Test description.', 'verified_open_source', 'MIT', now(), 'verified'),
-  ('00000000-0000-4000-8000-000000000002', 'draft-fixture', 'Draft Fixture', 'A private test listing.', '', 'unknown', null, null, 'unreviewed'),
-  ('00000000-0000-4000-8000-000000000003', 'missing-name-fixture', '', '', '', 'unknown', null, null, 'unreviewed'),
-  ('00000000-0000-4000-8000-000000000004', 'unverified-license-fixture', 'License Fixture', 'A test listing.', '', 'unknown', null, null, 'verified'),
-  ('00000000-0000-4000-8000-000000000005', 'missing-repository-fixture', 'Repository Fixture', 'A test listing.', '', 'verified_open_source', 'MIT', now(), 'verified'),
-  ('00000000-0000-4000-8000-000000000006', 'missing-category-fixture', 'Category Fixture', 'A test listing.', '', 'verified_open_source', 'MIT', now(), 'verified');
+  ('00000000-0000-4000-8000-000000000001', 'published-fixture', 'Published Fixture', 'A published test listing.', 'Test description.', 'verified_open_source', 'MIT', now(), 'verified', now()),
+  ('00000000-0000-4000-8000-000000000002', 'draft-fixture', 'Draft Fixture', 'A private test listing.', '', 'unknown', null, null, 'unreviewed', null),
+  ('00000000-0000-4000-8000-000000000003', 'missing-name-fixture', '', '', '', 'unknown', null, null, 'unreviewed', null),
+  ('00000000-0000-4000-8000-000000000004', 'unverified-license-fixture', 'License Fixture', 'A test listing.', '', 'unknown', null, null, 'verified', null),
+  ('00000000-0000-4000-8000-000000000005', 'missing-repository-fixture', 'Repository Fixture', 'A test listing.', '', 'verified_open_source', 'MIT', now(), 'verified', null),
+  ('00000000-0000-4000-8000-000000000006', 'missing-category-fixture', 'Category Fixture', 'A test listing.', '', 'verified_open_source', 'MIT', now(), 'verified', null);
 
 insert into public.repositories (
   id, project_id, provider, provider_repository_id, full_name, canonical_url,
-  primary_language, stars, forks, availability_status
+  primary_language, stars, forks, availability_status,
+  owner_login, repository_name, is_private, visibility, is_disabled,
+  source_field_states, source_observed_at, last_successful_sync_at
 ) values
-  ('10000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', 'github', 'fixture-1', 'fixtures/published', 'https://github.com/fixtures/published', 'Rust', 10, 2, 'available'),
-  ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'github', 'fixture-2', 'fixtures/published-extra', 'https://github.com/fixtures/published-extra', 'Rust', 4, 1, 'available'),
-  ('10000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', 'github', 'fixture-3', 'fixtures/draft', 'https://github.com/fixtures/draft', 'Go', 1, 0, 'available'),
-  ('10000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000004', 'github', 'fixture-4', 'fixtures/license', 'https://github.com/fixtures/license', 'Go', 1, 0, 'available'),
-  ('10000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000006', 'github', 'fixture-5', 'fixtures/category', 'https://github.com/fixtures/category', 'Go', 1, 0, 'available');
+  ('10000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', 'github', '100001', 'fixtures/published', 'https://github.com/fixtures/published', 'Rust', 10, 2, 'available', 'fixtures', 'published', false, 'public', false, '{"visibility":"present"}', now(), now()),
+  ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'github', 'fixture-2', 'fixtures/published-extra', 'https://github.com/fixtures/published-extra', 'Rust', 4, 1, 'available', null, null, null, null, null, '{}', null, null),
+  ('10000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000002', 'github', 'fixture-3', 'fixtures/draft', 'https://github.com/fixtures/draft', 'Go', 1, 0, 'available', null, null, null, null, null, '{}', null, null),
+  ('10000000-0000-4000-8000-000000000004', '00000000-0000-4000-8000-000000000004', 'github', 'fixture-4', 'fixtures/license', 'https://github.com/fixtures/license', 'Go', 1, 0, 'available', null, null, null, null, null, '{}', null, null),
+  ('10000000-0000-4000-8000-000000000005', '00000000-0000-4000-8000-000000000006', 'github', 'fixture-5', 'fixtures/category', 'https://github.com/fixtures/category', 'Go', 1, 0, 'available', null, null, null, null, null, '{}', null, null);
 
 update public.projects
 set primary_repository_id = '10000000-0000-4000-8000-000000000001'
@@ -144,7 +146,7 @@ values ('10000000-0000-4000-8000-000000000001', date '2026-11-05', now(), 10, 2)
 -- Constraints and relational behavior.
 select throws_ok(
   $$insert into public.repositories (provider, provider_repository_id, full_name, canonical_url)
-    values ('github', 'fixture-1', 'duplicates/repo', 'https://github.com/duplicates/repo')$$,
+    values ('github', '100001', 'duplicates/repo', 'https://github.com/duplicates/repo')$$,
   '23505', null, 'duplicate provider repository IDs are rejected'
 );
 select is(
