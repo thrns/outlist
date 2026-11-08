@@ -278,6 +278,15 @@ This roadmap separates the current demo from planned platform capabilities.
   source freshness/provenance, repository visibility and availability, human
   decisions, active categories, unresolved review items, and concurrency before
   making a project public under existing RLS.
+- Added a narrow source-safety correction: a validated terminal GitHub access
+  restriction on a published primary repository atomically moves the project
+  to `pending_review`, advances its revision, records a system-origin safety
+  event, opens one blocking review item, and marks repository availability
+  `access_restricted`. Public RLS hides the project and repository at commit.
+- Public-source recovery restores repository availability only. Renewed current
+  evidence, human verification where needed, review resolution, and a new
+  explicit administrator publication decision are required; both publication
+  decisions remain in the append-only audit.
 - Added pgTAP security assertions, real local Auth/PostgreSQL workflow
   integration, an authenticated Playwright review/edit flow, generated type
   parity, and CI coverage. No hosted migration, production publication, merge,
@@ -291,8 +300,9 @@ This roadmap separates the current demo from planned platform capabilities.
   the immediate next milestones are PostgreSQL-backed catalog search and
   connecting the existing public Outlist interface to that search.
 - Hosted migrations and live project publication have not been run. The audit
-  is append-only and the admin flow has no unpublish or destructive rollback
-  action.
+  is append-only and administrators have no general unpublish or destructive
+  rollback action; confirmed primary-source access restrictions are handled by
+  the narrow system safety demotion described above.
 
 ## Later milestones
 

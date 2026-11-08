@@ -110,9 +110,16 @@ contradictory visibility indicators produce a lease-fenced terminal candidate
 outcome containing only safe classification and request provenance. The
 database rejects private canonical writes. For an existing canonical row, the
 worker may change availability to `access_restricted` while preserving its ID,
-project association, and prior public observations. Ambiguous 404 responses do
-not establish that a repository became private or was deleted. Repository
-homepage values are normalized as absolute HTTP or HTTPS URLs; credentials,
+project association, and prior public observations. If that row is the primary
+repository of a published project, the fenced failure transaction locks the
+project first, moves it to `pending_review`, advances its editorial revision,
+records a system-origin safety event, and opens one blocking repository review
+item before it records the restriction. The transaction retains the human
+editorial audit and project identity. Ambiguous 404 responses do not establish
+that a repository became private or was deleted. A later validated public
+observation can restore repository availability, but never republishes the
+project; renewed evidence, review resolution, and a new administrator publish
+decision are required. Repository homepage values are normalized as absolute HTTP or HTTPS URLs; credentials,
 control characters, malformed values, and non-web schemes are rejected and
 represented with a safe `rejected` source-field state. Homepages are never
 fetched, and an unsafe homepage does not block other repository metadata. A
@@ -312,5 +319,11 @@ active categories, verified license and quality decisions, and no unresolved
 blocking review items can be published. Public readers continue using the
 existing RLS policy. This milestone does not connect the public directory to
 PostgreSQL search or perform hosted migrations. Published projects have no
-rollback action in the admin UI; the append-only audit remains available for a
-separately reviewed correction or unpublishing policy.
+general rollback action in the admin UI. A confirmed GitHub visibility
+restriction is the narrow safety exception: it atomically removes a published
+project from public RLS, records a system-origin event, and leaves the project
+pending review. A later public source observation restores repository
+availability only. Republication requires current evidence, renewed human
+verification where needed, resolved blocking review, and a new explicit
+administrator decision; each human publish decision remains in the append-only
+audit.

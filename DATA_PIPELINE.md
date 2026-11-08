@@ -810,12 +810,38 @@ explicit administrator action can return it to review.
 `editorial_decisions` is private and append-only. Actions carry a project
 revision, and stale forms fail with a conflict. No browser can call editorial
 RPCs or read the audit table. There is no bulk publish or delete action. The
-workflow has no unpublish or audit rollback operation; any later correction or
-unpublishing policy requires its own reviewed design and migration.
+workflow has no general administrator unpublish action. A validated, terminal
+GitHub visibility restriction is the narrow system safety exception: the
+fenced failure transaction verifies the active claim and structured evidence,
+looks up the canonical repository by stable provider ID, locks the associated
+project before updating the repository, and atomically moves a published
+primary-repository project to `pending_review`. It increments
+`editorial_revision`, appends a `system`-origin row to
+`project_safety_events`, opens or reopens one blocking repository review item,
+sets repository availability to `access_restricted`, and commits the existing
+candidate failure state plus allowlisted source provenance. The event contains
+no GitHub response body and has no administrator actor. Existing project and
+repository IDs, source metadata, editorial overrides, logos, human decisions,
+and review history remain intact. The project and repository RLS policies hide
+the demoted rows as soon as the transaction commits. The publication guard
+remains active for every unrelated service-role update.
+
+Only an explicit visibility signal from a validated HTTP 200 repository
+response enters that path. Ambiguous 404s, retryable failures, rate limits, and
+incomplete observations retain their ordinary failure behavior. A later
+successful public enrichment may restore repository availability, but cannot
+publish the project. Fresh current assessment/source evidence, any needed
+renewed human license and quality decisions, resolution of the safety review
+item, and a new explicit administrator publication decision are required.
+Publication history allows this second human decision while preserving the
+first one. Repeated restriction observations reuse the blocking item and do
+not duplicate the demotion event.
 
 `bun run test:editorial-db` creates real local Auth identities and exercises
 PostgREST/PostgreSQL decisions, revocation, concurrent edits, restricted and
-incomplete evidence, publication blockers, audit correctness, and public RLS.
+incomplete evidence, publication blockers, audit correctness, public RLS,
+published-primary source restriction, safe recovery, deliberate republication,
+and the publication race.
 The browser E2E uses local OTP through Mailpit and edits a real database draft.
 These checks do not run hosted migrations, publish live projects, or validate
 hosted email delivery.

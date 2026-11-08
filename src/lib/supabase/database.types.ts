@@ -259,6 +259,38 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"project_safety_events": {
+                  Row: {
+                    "candidate_id": string,"created_at": string,"event_type": string,"id": string,"origin": string,"previous_publication_status": string,"project_id": string,"provider": string,"provider_repository_id": string,"repository_id": string,"resulting_publication_status": string,"resulting_revision": number,"source_observed_at": string,"source_url": string,"visibility_signal": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "candidate_id": string,"created_at"?: string,"event_type": string,"id"?: string,"origin"?: string,"previous_publication_status": string,"project_id": string,"provider"?: string,"provider_repository_id": string,"repository_id": string,"resulting_publication_status": string,"resulting_revision": number,"source_observed_at": string,"source_url": string,"visibility_signal": string
+                  }
+                  Update: {
+                    "candidate_id"?: string,"created_at"?: string,"event_type"?: string,"id"?: string,"origin"?: string,"previous_publication_status"?: string,"project_id"?: string,"provider"?: string,"provider_repository_id"?: string,"repository_id"?: string,"resulting_publication_status"?: string,"resulting_revision"?: number,"source_observed_at"?: string,"source_url"?: string,"visibility_signal"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "project_safety_events_candidate_id_fkey"
+      columns: ["candidate_id"]
+isOneToOne: false
+      referencedRelation: "repository_candidates"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "project_safety_events_project_id_fkey"
+      columns: ["project_id"]
+isOneToOne: false
+      referencedRelation: "projects"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "project_safety_events_repository_id_fkey"
+      columns: ["repository_id"]
+isOneToOne: false
+      referencedRelation: "repositories"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"project_tags": {
                   Row: {
                     "created_at": string,"project_id": string,"tag_id": string
