@@ -236,6 +236,23 @@ This test calls the real workers against local PostgREST/PostgreSQL and
 deterministic mocked GitHub HTTP responses. It proves local schema and workflow
 behavior; it is not a live GitHub crawl or hosted database verification.
 
+Pipeline reports separate stages executed from eligible records committed in
+this invocation. On `--resume`, `reused_record_count` and
+`reused_record_ids` identify earlier durable records used by a validated
+chain. `end_to_end_project_completed` requires one coherent candidate →
+repository → assessment → pending draft → pending logo chain with matching
+stable GitHub repository IDs and valid provenance/review links. A run can
+finish its workers and commit candidates while reporting no completed project.
+An empty resume can still identify a validated reused chain. A pending draft
+is not a published listing; this pipeline performs no publication, license or
+quality verification, or logo approval.
+
+The integrity audit compares provider and stable numeric repository ID, so a
+candidate's historical name survives a repository rename without a false
+critical finding. It keeps critical findings for actual candidate/repository ID
+conflicts and reports objectively invalid published states without inferring
+that a constraint-valid editorial publication was unauthorized.
+
 To opt into actual public GitHub API reads, use the deliberately small smoke
 budget:
 
@@ -245,11 +262,10 @@ bun run pipeline -- --live-smoke --execute
 
 Set a server-only `GITHUB_TOKEN` for the authenticated API budget when needed.
 Live smoke output labels GitHub access and Supabase commits separately, then
-calls a service-only read endpoint to inspect the run's committed rows and
-relationships. It reports success only when it sees a valid candidate, public
-enriched repository, assessment with provenance and review linkage, classified
-unpublished draft, and pending logo candidate with review linkage. Fixture
-responses cannot be reported as live smoke output.
+uses a service-only read endpoint to verify one joined stable-ID lineage and
+return its candidate, repository, assessment, project, and logo IDs with
+evidence. Valid records from different repositories cannot combine into
+success. Fixture responses cannot be reported as live smoke output.
 
 #### Hosted Supabase change control
 
@@ -266,8 +282,9 @@ or `GITHUB_TOKEN` in any `NEXT_PUBLIC_` variable.
    server environment. Confirm the URL-derived project reference independently.
 2. Review the ascending migration chain in `supabase/migrations/`, beginning
    with the catalog schema and category seed, followed by discovery,
-   enrichment/source safety, assessment, logos, immutable logo assets, and
-   `20261107130000_m1_06_pipeline_operations.sql`. Run a schema-only read first
+   enrichment/source safety, assessment, logos, immutable logo assets,
+   `20261107130000_m1_06_pipeline_operations.sql`, and
+   `20261107140000_m1_06_lineage_integrity_correction.sql`. Run a schema-only read first
    with `bun run supabase migration list --remote="$PROJECT_REF"` and compare
    the remote history with the local files.
 3. Take a named, restorable Supabase dashboard backup/PITR restore point. For

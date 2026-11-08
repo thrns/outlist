@@ -653,9 +653,16 @@ bun run pipeline -- --audit
 Writes require `--execute`. Defaults are one query, one page, ten discovered
 candidates, five enrichments, five assessments, and five logo projects, with
 hard ceilings for every stage. Resume continues existing durable queue state.
-An empty result set is reported as `empty`, not successful ingestion. Status
-uses aggregate SQL counts and does not start repository search. Audit findings
-are structured by severity and record ID; the audit is read-only.
+Reports distinguish `execution_status` (whether workers finished), `data_status`
+(eligible records committed in this invocation), and
+`end_to_end_project_completed` (one complete validated lineage). Each stage
+retains its counters and current-run persisted record IDs; resume also reports
+reused record counts and IDs. A run may finish its workers and commit a
+candidate while remaining partial because no complete project lineage exists.
+An empty resume can still identify a validated reused lineage without claiming
+new commits. A pending project draft remains distinct from a published listing.
+Status uses aggregate SQL counts and does not start repository search. Audit
+findings are structured by severity and record ID; the audit is read-only.
 
 Inventory distinguishes discovered candidates, enrichment-ready candidates,
 successful public repositories, partial and failed enrichments, assessments,
@@ -679,12 +686,21 @@ It is capped at one discovery partition/page, ten candidates, five
 enrichments, five assessments, and five logo projects. These are ceilings, not
 minimums. The run does not call a GitHub write endpoint, approve a license,
 verify quality, approve a logo, or publish a project. A service-only SQL
-inspection selects records connected to the run's existing job IDs and logo
-provenance, then checks candidate source observations, public eligibility,
-assessment evidence/review linkage, pending draft categories/state, and pending
-logo review relationships. The report says live smoke succeeded only when
-those committed rows and links are present. Fixture-backed integration is
-always labeled as fixture data and cannot satisfy `--live-smoke`.
+inspection returns one joined candidate, canonical repository, assessment,
+draft, and pending-logo lineage with their IDs and evidence. It verifies
+stable provider identity, public eligibility, validated source provenance,
+review links, primary repository and category evidence, and the absence of
+pipeline approvals. Stage rows from different repositories cannot combine into
+success. Resume may reuse earlier validated rows and labels their stage
+origins. Fixture-backed integration is always labeled as fixture data and
+cannot satisfy `--live-smoke`.
+
+The audit compares candidate and canonical repository provider plus stable
+numeric provider ID, so a historical candidate name remains valid after a
+canonical rename. It flags ID association conflicts as critical. Published
+projects are not called unauthorized merely because assessment originally
+created them; the audit flags only objectively invalid published states that
+contradict database publication constraints.
 
 Rate-limited work is persisted by the existing workers. The report includes
 the safe API reason and matches the retry schedule to the failed partition or
@@ -697,11 +713,12 @@ remains.
 
 The complete local integration invokes the real orchestrator and all four
 workers through PostgREST/PostgreSQL, using deterministic mocked GitHub HTTP
-responses. It covers initial ingestion, repeated resume, idempotency, rejected
-and discarded candidates, private exclusion, partial enrichment, missing
-classification evidence, rate limits, checkpoint preservation after stage
-failure, review relationships, pending-only logos, inventory, read-only audit,
-and privileged RPC/RLS restrictions:
+responses. It covers one complete linked lineage, unrelated stage-record
+rejection, discovery-only progress, reused records on resume, idempotency,
+rejected/private candidates, partial enrichment, missing classification and
+logo evidence, rate limits, checkpoint preservation after stage failure,
+rename and provider-ID audit behavior, editorial publication, review
+relationships, inventory, read-only audit, and privileged RPC/RLS restrictions:
 
 ```bash
 eval "$(bun run supabase status --output env)"

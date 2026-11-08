@@ -95,6 +95,9 @@ type StageResult = {
   permanent_or_review_failures: number;
   worker_reported_committed: number;
   persisted_record_count: number | null;
+  persisted_record_ids: string[];
+  reused_record_count: number;
+  reused_record_ids: string[];
   persisted_record_deltas: Record<string, number | null>;
   job_ids: string[];
   events: Record<string, unknown>[];
@@ -413,7 +416,9 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
         result.status = result.status === "failed" ? "failed" : "partial";
         result.error_events.push({ event: "persisted_record_inspection_failed", code: verification.error?.code ?? null });
       } else {
-        result.persisted_record_count = persistedRecordCount(entry.name, verification.data as Record<string, unknown>);
+        const persisted = persistedRecords(entry.name, verification.data as Record<string, unknown>);
+        result.persisted_record_ids = persisted.map((row) => String(row.id)).filter(Boolean);
+        result.persisted_record_count = persisted.length;
         result.committed = result.persisted_record_count;
       }
     }
@@ -451,25 +456,54 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
   const finalReportResult = await database.rpc("pipeline_operator_report");
   const finalOperatorReport = finalReportResult.data && typeof finalReportResult.data === "object"
     ? finalReportResult.data as Report : null;
-  let overallStatus = determineRunStatus(parsed.mode, stageResults, finalOperatorReport);
+  let persistedInspection: Record<string, unknown> | null = null;
+  let lineageInspectionFailed = false;
+  if (parsed.mode === "execute") {
+    const verified = await database.rpc(parsed.resume ? "pipeline_operator_verify_resume" : "pipeline_operator_verify_run", {
+      p_run_id: runId,
+    });
+    if (verified.error || !verified.data || typeof verified.data !== "object") {
+      lineageInspectionFailed = true;
+      warnings.push({ code: "persisted_lineage_inspection_failed", message: "Stage execution finished, but persisted repository lineage could not be validated." });
+    } else {
+      persistedInspection = verified.data as Record<string, unknown>;
+      applyReusedLineageRecords(stageResults, persistedInspection);
+    }
+  }
+  const lineageValidation = persistedInspection
+    ? summarizePersistedSmoke(persistedInspection)
+    : parsed.mode === "dry-run" ? null : summarizePersistedSmoke({ pipeline_run_id: runId });
+  let overallStatus = determineRunStatus(parsed.mode, stageResults, finalOperatorReport, lineageValidation);
+  if (lineageInspectionFailed && overallStatus !== "partial") overallStatus = "partial";
   let liveSmokeValidation: Record<string, unknown> | null = null;
   if (parsed.liveSmoke) {
-    const verified = await database.rpc("pipeline_operator_verify_run", { p_run_id: runId });
-    if (verified.error || !verified.data || typeof verified.data !== "object") {
+    if (!persistedInspection) {
       blockers.push({ code: "live_smoke_persisted_verification_failed", message: "Stage execution ended, but the service-only row and relationship inspection failed; the live smoke cannot be called successful." });
-      liveSmokeValidation = { inspected: false, success: false, diagnostic: verified.error?.code ?? "verification_unavailable" };
+      liveSmokeValidation = { inspected: false, success: false, diagnostic: "verification_unavailable" };
       if (overallStatus === "complete") overallStatus = "partial";
     } else {
-      liveSmokeValidation = summarizePersistedSmoke(verified.data as Record<string, unknown>);
+      liveSmokeValidation = {
+        ...lineageValidation,
+        success: lineageValidation?.success === true
+          && !stageResults.some((stage) => ["failed", "partial", "skipped"].includes(stage.status)),
+      };
       if (liveSmokeValidation.success !== true && overallStatus === "complete") overallStatus = "partial";
     }
   }
+  const newlyCommittedRecordCount = stageResults.reduce((total, stage) => total + (stage.persisted_record_count ?? 0), 0);
+  const executionStatus = parsed.mode === "dry-run" ? "planned"
+    : stageResults.some((stage) => ["failed", "partial", "skipped"].includes(stage.status)) ? "partial" : "completed";
   const output = {
     event: "pipeline_report",
     run_id: runId,
     mode: parsed.mode,
     run_status: overallStatus,
     complete: overallStatus === "complete",
+    execution_status: executionStatus,
+    data_status: newlyCommittedRecordCount > 0 ? "committed" : "empty",
+    newly_committed_record_count: newlyCommittedRecordCount,
+    end_to_end_project_completed: lineageValidation?.success === true,
+    lineage_validation: lineageValidation,
     started_at: new Date(startedAt).toISOString(),
     finished_at: new Date().toISOString(),
     duration_ms: Date.now() - startedAt,
@@ -496,10 +530,10 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
     warnings,
     publication_or_approval_performed: false,
     live_smoke_validation: liveSmokeValidation,
-    data_ingestion_success: overallStatus === "complete" && stageResults.some((stage) => stage.persisted_record_count !== null && stage.persisted_record_count > 0),
+    data_ingestion_success: lineageValidation?.success === true,
   };
   stdout(`${JSON.stringify(output, null, 2)}\n`);
-  return overallStatus === "complete" || overallStatus === "dry_run" ? 0 : 1;
+  return overallStatus === "complete" || overallStatus === "empty" || overallStatus === "dry_run" ? 0 : 1;
 }
 
 function createTrackedGitHubClient(metrics: GitHubMetrics): GitHubClient {
@@ -689,6 +723,7 @@ function summarizeStage(stage: StageName, events: Record<string, unknown>[], err
     stage, status, exit_code: exitCode, duration_ms: durationMs, attempted,
     committed, deduplicated, skipped, retryable_failures: retryable,
     permanent_or_review_failures: permanent, worker_reported_committed: committed, persisted_record_count: null,
+    persisted_record_ids: [], reused_record_count: 0, reused_record_ids: [],
     persisted_record_deltas: {}, job_ids: jobIds,
     events, error_events: errors, last_durable_checkpoint: checkpoint,
   };
@@ -698,7 +733,8 @@ function skippedStage(stage: StageName): StageResult {
   return {
     stage, status: "skipped", exit_code: null, duration_ms: 0, attempted: 0, committed: 0,
     deduplicated: 0, skipped: 0, retryable_failures: 0, permanent_or_review_failures: 0,
-    worker_reported_committed: 0, persisted_record_count: null, persisted_record_deltas: {},
+    worker_reported_committed: 0, persisted_record_count: null,
+    persisted_record_ids: [], reused_record_count: 0, reused_record_ids: [], persisted_record_deltas: {},
     job_ids: [], events: [], error_events: [], last_durable_checkpoint: null,
   };
 }
@@ -751,40 +787,47 @@ export function summarizePersistedSmoke(raw: Record<string, unknown>): Record<st
   const assessments = rows("assessments");
   const drafts = rows("project_drafts");
   const logos = rows("logo_candidates");
+  const lineages = rows("validated_lineages").filter((row) => row.complete === true && row.eligible_for_run_success === true);
+  const matchingLineage = lineages[0] ?? null;
+  const evidence = isRecord(matchingLineage?.evidence) ? matchingLineage.evidence : {};
   const checks = {
-    committed_candidate: candidates.some((row) => row.source_observation_valid === true),
-    public_enriched_repository: repositories.some((row) => row.public_eligible === true && row.enrichment_succeeded === true),
-    assessed_with_provenance_and_review: assessments.some((row) => row.assessment_complete === true
-      && row.provenance_valid === true && row.review_relationship_valid === true),
-    unpublished_classified_draft: drafts.some((row) => row.draft_valid === true && Number(row.category_evidence_count) > 0),
-    pending_logo_with_review: logos.some((row) => row.logo_candidate_valid === true && row.review_relationship_valid === true),
+    coherent_repository_lineage: matchingLineage !== null,
+    candidate_provenance_and_state: evidence.candidate_provenance_valid === true && evidence.candidate_state_valid === true,
+    stable_identity_and_public_enrichment: evidence.candidate_repository_identity_valid === true
+      && evidence.public_repository_eligible === true && evidence.enrichment_succeeded === true,
+    assessment_provenance_and_review: evidence.assessment_source_provenance_valid === true
+      && evidence.assessment_review_relationship_valid === true,
+    draft_primary_repository_and_category: evidence.draft_primary_repository_valid === true
+      && evidence.draft_category_evidence_valid === true,
+    pending_logo_review_and_no_approval: evidence.pending_logo_review_relationship_valid === true
+      && evidence.no_automatic_approval_or_publication === true,
   };
   return {
     inspected: true,
     pipeline_run_id: raw.pipeline_run_id ?? null,
+    resume_mode: raw.resume_mode === true,
     records: { discovered_candidates: candidates.length, enriched_repositories: repositories.length,
       assessments: assessments.length, project_drafts: drafts.length, logo_candidates: logos.length },
     checks,
-    inspected_record_ids: {
-      discovered_candidates: candidates.map((row) => row.id),
-      repositories: repositories.map((row) => row.id),
-      assessments: assessments.map((row) => row.id),
-      projects: drafts.map((row) => row.id),
-      logos: logos.map((row) => row.id),
-    },
-    success: Object.values(checks).every(Boolean),
+    validated_lineage_count: lineages.length,
+    matching_lineage: matchingLineage,
+    success: matchingLineage !== null && Object.values(checks).every(Boolean),
     publication_or_approval_performed: false,
   };
 }
 
-function determineRunStatus(mode: Mode, stages: StageResult[], final: Report | null): "complete" | "partial" | "failed" | "empty" | "dry_run" {
-  if (stages.some((stage) => stage.status === "failed")) return "failed";
-  if (stages.some((stage) => stage.status === "partial" || stage.status === "skipped")) return "partial";
+function determineRunStatus(
+  mode: Mode,
+  stages: StageResult[],
+  final: Report | null,
+  lineageValidation: Record<string, unknown> | null,
+): "complete" | "partial" | "empty" | "dry_run" {
+  if (stages.some((stage) => ["failed", "partial", "skipped"].includes(stage.status))) return "partial";
   if (mode === "dry-run") return "dry_run";
   const hasData = stages.some((stage) => stage.persisted_record_count !== null && stage.persisted_record_count > 0);
-  if (!hasData) return "empty";
   if (!final) return "partial";
-  return "complete";
+  if (!hasData) return "empty";
+  return lineageValidation?.success === true ? "complete" : "partial";
 }
 
 function inventoryDeltas(initial: Record<string, unknown> | undefined, final: Record<string, unknown> | undefined): Record<string, number | null> {
@@ -799,18 +842,44 @@ function inventoryDeltas(initial: Record<string, unknown> | undefined, final: Re
   return output;
 }
 
-function persistedRecordCount(stage: StageName, report: Record<string, unknown>): number {
+function persistedRecords(stage: StageName, report: Record<string, unknown>): Record<string, unknown>[] {
   const key = {
     discovery: "discovered_candidates",
     enrichment: "enriched_repositories",
     assessment: "assessments",
     logo_candidates: "logo_candidates",
   }[stage];
-  if (!Array.isArray(report[key])) return 0;
-  const rows = report[key] as unknown[];
-  if (stage === "discovery") return rows.filter((row) => isRecord(row) && row.source_observation_valid === true).length;
-  if (stage === "assessment") return rows.filter((row) => isRecord(row) && row.assessment_complete === true).length;
-  return rows.length;
+  if (!Array.isArray(report[key])) return [];
+  const rows = (report[key] as unknown[]).filter(isRecord);
+  if (stage === "discovery") return rows.filter((row) => row.source_observation_valid === true && row.discovery_state_valid === true);
+  if (stage === "enrichment") return rows.filter((row) => row.public_eligible === true && row.enrichment_succeeded === true);
+  if (stage === "assessment") return rows.filter((row) => row.assessment_complete === true
+    && row.provenance_valid === true && row.review_relationship_valid === true);
+  if (stage === "logo_candidates") return rows.filter((row) => row.logo_candidate_valid === true
+    && row.source_provenance_valid === true && row.review_relationship_valid === true);
+  return rows.filter((row) => row.draft_valid === true && row.valid_primary_repository === true
+    && row.classification_evidence_valid === true && Number(row.category_evidence_count) > 0);
+}
+
+function applyReusedLineageRecords(stages: StageResult[], inspection: Record<string, unknown>) {
+  const lineages = Array.isArray(inspection.validated_lineages)
+    ? inspection.validated_lineages.filter(isRecord) : [];
+  const recordKeys: Record<string, string> = {
+    discovery: "candidate", enrichment: "repository", assessment: "assessment", logo_candidates: "logo",
+  };
+  for (const stage of stages) {
+    const key = recordKeys[stage.stage];
+    const lineageKey = stage.stage === "logo_candidates" ? "logo" : key;
+    if (!lineageKey) continue;
+    const reused = new Set<string>();
+    for (const lineage of lineages) {
+      const origins = isRecord(lineage.stage_origins) ? lineage.stage_origins : {};
+      const origin = isRecord(origins[lineageKey]) ? origins[lineageKey] as Record<string, unknown> : null;
+      if (origin?.status === "reused" && typeof origin.record_id === "string") reused.add(origin.record_id);
+    }
+    stage.reused_record_ids = [...reused];
+    stage.reused_record_count = reused.size;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

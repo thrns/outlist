@@ -246,9 +246,23 @@ licenses or logos, verifies quality, uploads logo bytes, or publishes a
 project. Hosted migration and ingestion remain separately approved operator
 actions; CI uses local Supabase and deterministic HTTP fixtures only.
 
+The run report separates worker execution, durable records committed during
+the invocation, records reused during resume, and completion of one coherent
+candidate-to-pending-logo project lineage. The service-only verifier joins the
+stages through their actual foreign keys and matching stable GitHub repository
+ID, caps inspection to the pilot's 50-record budget, and returns the matched
+record IDs and provenance/review evidence. A discovery candidate alone can be
+committed while execution finishes without producing a project. Reused
+lineage can be reported on resume without counting its rows as new commits.
+Publication remains a separate editorial state.
+
 Inventory counts come from aggregate SQL queries. Integrity findings identify
 duplicate provider identities, invalid candidate/project/review relationships,
 restricted assessments, unsupported draft categories, missing provenance,
-inconsistent snapshots, invalid approved-logo object references, unexpected
-publication/verification state, and job-counter mismatches. The audit returns
-findings only; it never repairs or deletes records.
+inconsistent snapshots, invalid approved-logo object references, objectively
+invalid published states, and job-counter mismatches. Candidate identity uses
+provider and stable numeric provider ID, so an older discovered name can differ
+from the renamed canonical name without a false finding. Candidate-to-repository
+ID conflicts remain critical. A valid editorial publication is not classified
+as unauthorized based only on automated-assessment provenance. The audit
+returns findings only; it never repairs or deletes records.

@@ -226,9 +226,20 @@ This roadmap separates the current demo from planned platform capabilities.
   explicit project-reference guards; unclassifiable remote hosts are blocked.
 - Added service-role-only aggregate inventory/preflight and run-scoped row
   relationship reports, without replacing ingestion-job or checkpoint state.
-- Reports actual run-associated committed records, duplicates, skips, partial
-  and terminal failures, retry reasons/times, API rate budget, durations, and
-  durable checkpoints. Empty results do not count as successful ingestion.
+- Added bounded coherent-lineage verification that joins candidate, canonical
+  repository, assessment, draft, and pending logo through real relationships
+  and stable GitHub repository IDs. Reports matching IDs and their evidence;
+  unrelated stage records cannot satisfy end-to-end completion.
+- Separates worker execution, eligible records committed in this invocation,
+  records reused on resume, complete project lineage, and published listings.
+  Discovery-only progress and empty results do not claim a newly completed
+  project.
+- Corrected integrity auditing to preserve historical candidate names after a
+  canonical repository rename, retain critical provider-ID conflict findings,
+  and avoid treating constraint-valid editorial publication as corruption.
+- Reports run-associated committed records, duplicates, skips, partial and
+  terminal failures, retry reasons/times, API rate budget, durations, and
+  durable checkpoints.
 - Added a local PostgREST/PostgreSQL integration that exercises the real
   orchestrator and all four workers against deterministic GitHub fixtures,
   including resume/idempotency, private/rejected candidates, partial data,

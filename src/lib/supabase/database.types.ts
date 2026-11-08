@@ -710,6 +710,12 @@ isOneToOne: false
 "pipeline_operator_report":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
+"pipeline_operator_report_v1":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"pipeline_operator_verify_resume":
+{ Args: { "p_run_id": string }; Returns: Json
+                           },
 "pipeline_operator_verify_run":
 { Args: { "p_run_id": string }; Returns: Json
                            },
