@@ -55,6 +55,7 @@ interface LogoDatabase {
 export interface LogoCliDependencies {
   supabase?: LogoDatabase;
   github?: Pick<ReturnType<typeof createGitHubClient>, "getRepositoryById">;
+  pipelineRunId?: string;
   downloadAvatar?: (sourceUrl: string, ownerId: number | string) => Promise<Buffer>;
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
@@ -223,6 +224,7 @@ async function discover(args: LogoArguments, db: LogoDatabase, dependencies: Log
         http_status: response.provenance.httpStatus, observed_at: sourceObservedAt,
         owner_id: String(sourceRepository.owner.id), owner_login: sourceRepository.owner.login,
         owner_type: sourceRepository.owner.type ?? null, repository_full_name: sourceRepository.fullName,
+        ...(dependencies.pipelineRunId ? { pipeline_run_id: dependencies.pipelineRunId } : {}),
       };
       if (!args.execute) {
         stdout(`${JSON.stringify({ event: "logo_candidate_preview", mode: "dry-run", project_id: project.id, repository_id: repository.id, provider_repository_id: repository.provider_repository_id, candidate_key: candidateKey, origin: "provider_avatar", status: "would_register_pending_review" })}\n`);

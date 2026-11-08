@@ -42,6 +42,7 @@ type EnrichmentGitHub = Pick<GitHubClient,
 export interface EnrichmentCliDependencies {
   supabase?: EnrichmentDatabase;
   github?: EnrichmentGitHub;
+  pipelineRunId?: string;
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
 }
@@ -160,10 +161,15 @@ export async function runEnrichmentCli(args: string[], dependencies: EnrichmentC
     stage = "job_start";
     const started = await invoke("start_github_enrichment_job", {
       p_resume: parsed.resume,
-      p_metadata: { max_releases: parsed.maxReleases, worker_id: workerId, cache_policy: "no_conditional_requests" },
+      p_metadata: { max_releases: parsed.maxReleases, worker_id: workerId, cache_policy: "no_conditional_requests",
+        ...(dependencies.pipelineRunId ? { pipeline_run_id: dependencies.pipelineRunId } : {}) },
     });
     if (typeof started !== "string") throw databaseFailure(stage, new Error("invalid response"));
     jobId = started;
+    if (dependencies.pipelineRunId) {
+      stage = "job_run_tag";
+      await invoke("tag_pipeline_ingestion_job", { p_job_id: jobId, p_run_id: dependencies.pipelineRunId });
+    }
     stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume })}\n`);
 
     while (!controller.signal.aborted && candidatesClaimed < parsed.maxCandidates) {

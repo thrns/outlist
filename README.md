@@ -39,6 +39,7 @@ existing routes.
 | `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
 | `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
 | `bun run test:logos-db` | Exercise real logo discovery, approval, and public Storage against local Supabase |
+| `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |
@@ -51,6 +52,12 @@ existing routes.
 | `bun run assess -- --execute --resume --max-repositories 5` | Resume durable assessment work |
 | `bun run logos -- --discover --dry-run` | Preview bounded GitHub avatar candidates without database writes |
 | `bun run logos -- --discover --execute --max-projects 10` | Register pending avatar candidates and review items |
+| `bun run pipeline -- --dry-run` | Preflight and preview all four ingestion stages without database writes |
+| `bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10` | Run the bounded local end-to-end pilot |
+| `bun run pipeline -- --resume --execute --max-candidates 10` | Safely resume existing durable stage queues and discovery checkpoints |
+| `bun run pipeline -- --status` | Read actual database inventory, checkpoints, leases, and GitHub rate budget without a crawl |
+| `bun run pipeline -- --audit` | Read-only structured data-integrity findings |
+| `bun run pipeline -- --live-smoke --execute` | Opt into a live GitHub smoke test, capped at one search page and five enrichment, assessment, and logo-project checks |
 | `bun run logos -- --register-official --execute --project-id <uuid> --source-url <https-url> --attribution <text>` | Register an operator-supplied official logo candidate |
 | `bun run logos -- --approve <logo-id> --avatar-source` | Validate and approve a pending GitHub avatar candidate |
 | `bun run logos -- --approve <logo-id> --local-file <path>` | Validate and approve an official candidate from a local operator file |
@@ -184,6 +191,140 @@ random attempt paths are not confidential. See [Data pipeline](DATA_PIPELINE.md)
 for recovery and exposure details. The demo UI keeps its existing letter
 fallback; no public UI redesign is part of M1-05.
 
+### M1-06 operator runbook
+
+Start a disposable local Supabase stack and load its keys into the current
+shell. Keep the service key server-side and do not paste the CLI status output
+into tickets or logs.
+
+```bash
+bun run supabase start
+eval "$(bun run supabase status --output env)"
+export NEXT_PUBLIC_SUPABASE_URL="$API_URL"
+export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY"
+export SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY"
+export OUTLIST_SUPABASE_ENVIRONMENT=local
+bun run pipeline -- --status
+bun run pipeline -- --audit
+bun run pipeline -- --dry-run
+bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10
+bun run pipeline -- --resume --execute --max-candidates 10
+bun run pipeline -- --status
+bun run pipeline -- --audit
+```
+
+`--execute` is required for database writes. The default is dry-run. Status
+reads aggregate counts, active leases, retry schedules, and source observations;
+it does not run repository search. The audit returns structured findings with
+severity and record IDs and never repairs rows. Discovery, enrichment,
+assessment, and logo candidates use their existing jobs, claims, checkpoints,
+retry state, and deduplication. Project drafts remain `pending_review`; license
+and quality decisions remain unverified; logos remain pending; nothing is
+published.
+
+The fixture integration is repeatable without GitHub credentials:
+
+```bash
+eval "$(bun run supabase status --output env)"
+NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
+SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
+OUTLIST_SUPABASE_ENVIRONMENT=local bun run test:pipeline-db
+```
+
+This test calls the real workers against local PostgREST/PostgreSQL and
+deterministic mocked GitHub HTTP responses. It proves local schema and workflow
+behavior; it is not a live GitHub crawl or hosted database verification.
+
+To opt into actual public GitHub API reads, use the deliberately small smoke
+budget:
+
+```bash
+bun run pipeline -- --live-smoke --execute
+```
+
+Set a server-only `GITHUB_TOKEN` for the authenticated API budget when needed.
+Live smoke output labels GitHub access and Supabase commits separately, then
+calls a service-only read endpoint to inspect the run's committed rows and
+relationships. It reports success only when it sees a valid candidate, public
+enriched repository, assessment with provenance and review linkage, classified
+unpublished draft, and pending logo candidate with review linkage. Fixture
+responses cannot be reported as live smoke output.
+
+#### Hosted Supabase change control
+
+Hosted migration and ingestion steps below are operator-run procedures. M1-06
+does not link, reset, migrate, or write to a hosted project automatically.
+Confirm the intended project reference and environment with the project owner,
+obtain explicit approval for the hosted operation, and keep production
+credentials in a server-side secret manager. Do not place `SUPABASE_SECRET_KEY`
+or `GITHUB_TOKEN` in any `NEXT_PUBLIC_` variable.
+
+1. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+   `SUPABASE_SECRET_KEY`, `GITHUB_TOKEN` (optional), and
+   `OUTLIST_SUPABASE_ENVIRONMENT=staging` or `production` in the operator's
+   server environment. Confirm the URL-derived project reference independently.
+2. Review the ascending migration chain in `supabase/migrations/`, beginning
+   with the catalog schema and category seed, followed by discovery,
+   enrichment/source safety, assessment, logos, immutable logo assets, and
+   `20261107130000_m1_06_pipeline_operations.sql`. Run a schema-only read first
+   with `bun run supabase migration list --remote="$PROJECT_REF"` and compare
+   the remote history with the local files.
+3. Take a named, restorable Supabase dashboard backup/PITR restore point. For
+   an additional operator-held SQL backup, use the pinned CLI and protect the
+   output file:
+
+   ```bash
+   umask 077
+   bun run supabase db dump --remote="$PROJECT_REF" --schema public,private \
+     --file "$BACKUP_DIR/outlist-before-m1-06.sql"
+   ```
+
+   Keep database dumps out of the repository and verify the backup can be
+   retained and restored under the organization's normal process.
+4. After the migration operation itself is explicitly approved, deploy through
+   the standard Supabase migration workflow. If linking is preferred, link
+   manually to the already-confirmed project reference first. Then preview and
+   apply only the pending migration chain:
+
+   ```bash
+   bun run supabase db push --remote="$PROJECT_REF" --skip-vault --dry-run
+   bun run supabase db push --remote="$PROJECT_REF" --skip-vault
+   bun run supabase migration list --remote="$PROJECT_REF"
+   ```
+
+   The second `db push` is a hosted database write. Never run it without that
+   separate operator approval. The migration does not create projects, approve
+   licenses or logos, or publish listings.
+5. Before ingestion, configure the service key only in the operator's server
+   environment and run `bun run pipeline -- --status` and
+   `bun run pipeline -- --audit`. Confirm the host, project reference,
+   environment label, applied migration version, category seed, service RPC
+   permissions, Storage bucket settings, current leases, and inventory. Resolve
+   blockers and review findings first.
+6. After separate approval for the hosted ingestion itself, execute a small
+   batch with both explicit target guards:
+
+   ```bash
+   bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10 \
+     --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
+   ```
+
+   For an actual GitHub API smoke run, add `--live-smoke`; its stricter limits
+   remain one search page and no more than five enrichments, assessments, or
+   logo projects. The CLI blocks custom remote hosts whose project reference
+   cannot be verified.
+7. Save the structured run output, then run `--status` and `--audit`. Compare
+   actual inventory, run-scoped persisted-row checks, retries, and integrity
+   findings. Project drafts and logo candidates require human review.
+8. After interruption, inspect `--status`, confirm the prior worker has
+   stopped and leases have expired, then use `--resume --execute` with the same
+   hosted target guards. Existing discovery checkpoints and queue state remain
+   authoritative.
+
+Hosted setup is documented but is not verified by local fixtures or the CI
+workflow. No hosted migration or data write was performed for this milestone.
+
 ### Real authentication integration checks
 
 The separate `auth-e2e` CI job installs Chromium and runs
@@ -216,9 +357,10 @@ to production tables. Hosted Supabase configuration and hosted SMTP delivery
 remain unverified. The search RPC, server-side catalog integration, submission
 endpoint, project publication tools, and recurring discovery remain later
 milestones. GitHub Actions validates the app, rebuilds the local database,
-tests discovery, enrichment, and assessment queue transactions with
-deterministic GitHub fixtures, and runs isolated Chromium authentication checks
-without hosted credentials.
+tests discovery, enrichment, assessment, logo Storage, and the unified pilot
+against deterministic GitHub fixtures, and runs isolated Chromium
+authentication checks without hosted credentials. The M1-06 operator workflow
+does not publish projects or approve licenses, quality, or logos.
 
 ## Environment variables
 

@@ -38,6 +38,7 @@ export interface DiscoveryCliDependencies {
   /** In-process integration seam; the production CLI has no configurable GitHub host. */
   supabase?: DiscoveryDatabase;
   github?: Pick<GitHubClient, "searchRepositories">;
+  pipelineRunId?: string;
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
 }
@@ -245,6 +246,10 @@ export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCli
     });
     if (typeof registered.data !== "string") throw databaseFailure(stage, new Error("invalid response"));
     jobId = registered.data;
+    if (dependencies.pipelineRunId) {
+      stage = "job_run_tag";
+      await invoke("tag_pipeline_ingestion_job", { p_job_id: jobId, p_run_id: dependencies.pipelineRunId });
+    }
     stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume, plan: parsed.plan })}\n`);
 
     while (!controller.signal.aborted && queriesClaimed < parsed.maxQueries && pagesCommitted < parsed.maxPages && candidatesSeen < parsed.maxCandidates) {

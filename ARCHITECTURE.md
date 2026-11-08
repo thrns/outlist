@@ -22,7 +22,9 @@ does not use the database. M1-03 adds a separate, restartable GitHub
 enrichment worker that normalizes candidate source metadata into canonical
 repository tables without creating projects. M1-04 adds a private assessment
 worker that turns successfully enriched repositories into explainable
-assessments and pending-review drafts through a single transaction.
+assessments and pending-review drafts through a single transaction. M1-05 adds
+pending logo candidates, and M1-06 composes all four existing workers through
+a bounded operator command with service-only inventory and integrity reports.
 
 ## Intended system
 
@@ -46,6 +48,10 @@ Standalone Bun enrichment worker (M1-03)
 Standalone Bun assessment worker (M1-04)
   └─ assessment lease → source-backed category/license/quality rules
        → atomic assessment evidence, draft association, and editorial review queue
+
+Standalone Bun operator (M1-06)
+  └─ safe preflight → discovery → enrichment → assessment → pending logo candidates
+       → aggregate inventory, run-scoped persisted-row checks, read-only audit
 ```
 
 The browser/server clients and database schema are implemented, but the public
@@ -213,3 +219,36 @@ test executes the real CLI through PostgREST using deterministic GitHub HTTP
 fixtures, then checks draft creation, review queue linkage, idempotency,
 rename handling, editorial preservation, and ordinary-client denial. No
 hosted project or production credential is required.
+
+## M1-06 ingestion operator boundary
+
+`scripts/pipeline.ts` is a server-side Bun operator command, not a browser API.
+It composes the existing discovery, enrichment, assessment, and logo discovery
+workers in order and keeps their PostgreSQL jobs, claims, retry state, and
+discovery checkpoints authoritative. Its random run identifier is attached to
+the existing job metadata and logo provenance only so the operator can
+attribute persisted rows and inspect their relationships. It does not create
+a second queue or checkpoint table.
+
+The command preflights the server-only Supabase credential, database schema
+and RPC grants, category seed, Storage bucket, target host/reference,
+running jobs and active leases, and GitHub API rate budget. `--status` and
+`--audit` are read-only and do not start search. The aggregate report and
+run-scoped verifier are service-role-only security-definer functions. Browser
+roles cannot read the ingestion inventory or call them.
+
+The default is dry-run; writes require `--execute`. Per-stage limits are
+bounded, hosted writes require explicit target flags, and custom remote hosts
+without an inferable project reference are blocked. Live smoke uses read-only
+GitHub HTTP requests, then inspects committed rows and relationships through
+the privileged report before it can be called successful. It never approves
+licenses or logos, verifies quality, uploads logo bytes, or publishes a
+project. Hosted migration and ingestion remain separately approved operator
+actions; CI uses local Supabase and deterministic HTTP fixtures only.
+
+Inventory counts come from aggregate SQL queries. Integrity findings identify
+duplicate provider identities, invalid candidate/project/review relationships,
+restricted assessments, unsupported draft categories, missing provenance,
+inconsistent snapshots, invalid approved-logo object references, unexpected
+publication/verification state, and job-counter mismatches. The audit returns
+findings only; it never repairs or deletes records.

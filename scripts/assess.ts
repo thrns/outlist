@@ -31,6 +31,7 @@ interface AssessmentDatabase {
 }
 export interface AssessmentCliDependencies {
   supabase?: AssessmentDatabase;
+  pipelineRunId?: string;
   writeStdout?: (text: string) => void;
   writeStderr?: (text: string) => void;
   now?: () => Date;
@@ -122,10 +123,15 @@ export async function runAssessmentCli(args: string[], dependencies: AssessmentC
   };
   try {
     const started = await invoke("start_github_repository_assessment_job", {
-      p_resume: parsed.resume, p_metadata: { worker_id: workerId, policy_version: POLICY_VERSION },
+      p_resume: parsed.resume, p_metadata: { worker_id: workerId, policy_version: POLICY_VERSION,
+        ...(dependencies.pipelineRunId ? { pipeline_run_id: dependencies.pipelineRunId } : {}) },
     });
     if (typeof started !== "string") throw new AssessmentOperationalError(stage, "Database returned an invalid job identifier.");
     jobId = started;
+    if (dependencies.pipelineRunId) {
+      stage = "job_run_tag";
+      await invoke("tag_pipeline_ingestion_job", { p_job_id: jobId, p_run_id: dependencies.pipelineRunId });
+    }
     stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume })}\n`);
     const categoryResult = await supabase.from("categories").select("id,slug,name,is_active").eq("is_active", true).limit(100);
     if (categoryResult.error || !Array.isArray(categoryResult.data)) throw new AssessmentOperationalError("category_load", "Could not load the approved category taxonomy.");

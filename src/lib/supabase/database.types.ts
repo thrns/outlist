@@ -707,6 +707,12 @@ isOneToOne: false
 "list_project_logo_cleanup_attempts":
 { Args: { "p_logo_id": string }; Returns: Json
                            },
+"pipeline_operator_report":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"pipeline_operator_verify_run":
+{ Args: { "p_run_id": string }; Returns: Json
+                           },
 "register_project_logo_candidate":
 { Args: { "p_attribution_text": string,"p_candidate_key": string,"p_origin": string,"p_project_id": string,"p_repository_id": string,"p_source_observed_at": string,"p_source_provenance": Json,"p_source_record_id": string,"p_source_url": string }; Returns: string
                            },
@@ -727,6 +733,9 @@ isOneToOne: false
                            },
 "start_github_repository_assessment_job":
 { Args: { "p_metadata"?: Json,"p_resume"?: boolean }; Returns: string
+                           },
+"tag_pipeline_ingestion_job":
+{ Args: { "p_job_id": string,"p_run_id": string }; Returns: undefined
                            }
           }
           Enums: {

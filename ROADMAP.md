@@ -216,6 +216,40 @@ This roadmap separates the current demo from planned platform capabilities.
   atomically. Failed transactions trigger fenced cleanup and explicit
   reconciliation.
 
+## M1-06 — End-to-end ingestion pilot and operational readiness (implemented)
+
+- Added a bounded operator command that runs discovery, enrichment,
+  assessment, pending logo-candidate discovery, and final inventory/audit in
+  order by invoking the existing workers and durable queues.
+- Added dry-run, explicit execute, resume, read-only status, read-only
+  integrity audit, and opt-in live GitHub smoke modes. Remote writes require
+  explicit project-reference guards; unclassifiable remote hosts are blocked.
+- Added service-role-only aggregate inventory/preflight and run-scoped row
+  relationship reports, without replacing ingestion-job or checkpoint state.
+- Reports actual run-associated committed records, duplicates, skips, partial
+  and terminal failures, retry reasons/times, API rate budget, durations, and
+  durable checkpoints. Empty results do not count as successful ingestion.
+- Added a local PostgREST/PostgreSQL integration that exercises the real
+  orchestrator and all four workers against deterministic GitHub fixtures,
+  including resume/idempotency, private/rejected candidates, partial data,
+  rate limits, failure recovery, review links, pending logos, inventory, audit,
+  and RLS boundaries.
+- Documented the hosted backup, migration, preflight, small-pilot, audit, and
+  recovery procedure. Hosted migration and writes remain operator-controlled;
+  no hosted run is included in CI.
+
+### Remaining limitations after M1-06
+
+- The live GitHub smoke mode is opt-in and still depends on the operator's
+  GitHub API access and remaining budget. A live hosted Supabase smoke run is
+  not required for CI and has not been represented by fixture results.
+- SQL integrity audit checks approved logo object references and stored
+  provenance metadata; it does not download and hash public Storage object
+  bytes. Use the existing logo reconciliation workflow for byte-level checks.
+- Discovery remains a bounded sample rather than an exhaustive GitHub crawl.
+- Hosted migration and ingestion have not been executed automatically; each
+  requires explicit operator target verification and approval.
+
 ## Later milestones
 
 - Implement server-side data access and replace browser-only persistence when
@@ -226,7 +260,6 @@ This roadmap separates the current demo from planned platform capabilities.
 - Move catalog search and filtering to PostgreSQL as the schema and query
   behavior are established.
 
-The local schema, service-only discovery, enrichment, assessment, and logo
-approval workflows are implemented. Hosted Supabase deployment, a
-database-backed catalog, production search, and database-backed moderation
-remain outside the current demo.
+The local schema and bounded end-to-end operator pilot are implemented.
+Hosted Supabase deployment, a database-backed catalog, production search, and
+database-backed moderation remain outside the current demo.

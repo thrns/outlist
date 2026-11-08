@@ -610,8 +610,9 @@ relationships only. Source records, candidate queues, job history,
 submissions, review queue entries, editorial overrides, and administrator
 allowlisting have no client grants or read policies. Direct submission writes
 are disabled pending a validated server endpoint. Administrator authentication
-and the bounded discovery and enrichment workers are implemented;
-database-backed UI belongs to later milestones.
+and the bounded discovery, enrichment, assessment, logo-candidate, and unified
+operator workflows are implemented; database-backed UI belongs to later
+milestones.
 
 Logo files use a public `project-logos` bucket with a 2 MiB limit and PNG,
 JPEG, and WebP input MIME restrictions. M1-05 stores normalized WebP only after
@@ -621,3 +622,124 @@ API; deleting metadata alone would not delete the object.
 
 Recurring scheduling, remote migration deployment, publication workflows,
 search RPC, and public UI integration remain outside these milestones.
+
+## M1-06 end-to-end pilot and operational readiness
+
+`bun run pipeline` is the bounded operator entry point for the existing
+discovery, enrichment, assessment, and logo-candidate workers. It calls those
+worker implementations directly and keeps their database jobs, partition
+checkpoints, claims, retry schedules, and deduplication as the durable source
+of truth. A run ID is attached to the existing jobs for reporting and
+run-scoped read-only verification; it does not add a second queue.
+
+The safe local sequence is:
+
+```bash
+bun run supabase start
+eval "$(bun run supabase status --output env)"
+export NEXT_PUBLIC_SUPABASE_URL="$API_URL"
+export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY"
+export SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY"
+export OUTLIST_SUPABASE_ENVIRONMENT=local
+bun run pipeline -- --status
+bun run pipeline -- --audit
+bun run pipeline -- --dry-run
+bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10
+bun run pipeline -- --resume --execute --max-candidates 10
+bun run pipeline -- --status
+bun run pipeline -- --audit
+```
+
+Writes require `--execute`. Defaults are one query, one page, ten discovered
+candidates, five enrichments, five assessments, and five logo projects, with
+hard ceilings for every stage. Resume continues existing durable queue state.
+An empty result set is reported as `empty`, not successful ingestion. Status
+uses aggregate SQL counts and does not start repository search. Audit findings
+are structured by severity and record ID; the audit is read-only.
+
+Inventory distinguishes discovered candidates, enrichment-ready candidates,
+successful public repositories, partial and failed enrichments, assessments,
+pending project drafts, drafts without active category evidence, review items,
+logo states, letter fallbacks, published projects, failed/rate-limited jobs,
+and last validated source observations. It labels the active GitHub adapter as
+deterministic fixtures, live API, or not checked, and the inventory target as
+local Supabase, hosted Supabase, or unclassified remote. The audit is
+database-only and does not call GitHub. This describes the current invocation;
+historical source provenance is retained on source records. A pending project
+draft is not a published listing.
+
+An opt-in live smoke run uses actual GitHub API GET requests and requires the
+operator to explicitly request writes:
+
+```bash
+bun run pipeline -- --live-smoke --execute
+```
+
+It is capped at one discovery partition/page, ten candidates, five
+enrichments, five assessments, and five logo projects. These are ceilings, not
+minimums. The run does not call a GitHub write endpoint, approve a license,
+verify quality, approve a logo, or publish a project. A service-only SQL
+inspection selects records connected to the run's existing job IDs and logo
+provenance, then checks candidate source observations, public eligibility,
+assessment evidence/review linkage, pending draft categories/state, and pending
+logo review relationships. The report says live smoke succeeded only when
+those committed rows and links are present. Fixture-backed integration is
+always labeled as fixture data and cannot satisfy `--live-smoke`.
+
+Rate-limited work is persisted by the existing workers. The report includes
+the safe API reason and matches the retry schedule to the failed partition or
+candidate, including its actual next eligible time. A failed stage stops later
+stages but keeps earlier committed work and checkpoints. Run `--status` before
+resuming and confirm the previous worker has stopped and no active lease
+remains.
+
+### Local fixture verification
+
+The complete local integration invokes the real orchestrator and all four
+workers through PostgREST/PostgreSQL, using deterministic mocked GitHub HTTP
+responses. It covers initial ingestion, repeated resume, idempotency, rejected
+and discarded candidates, private exclusion, partial enrichment, missing
+classification evidence, rate limits, checkpoint preservation after stage
+failure, review relationships, pending-only logos, inventory, read-only audit,
+and privileged RPC/RLS restrictions:
+
+```bash
+eval "$(bun run supabase status --output env)"
+NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
+SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
+OUTLIST_SUPABASE_ENVIRONMENT=local bun run test:pipeline-db
+```
+
+This validates local migrations and worker behavior without external network
+or a GitHub token. It is not evidence of actual GitHub API access or hosted
+Supabase readiness. The read-only live-smoke verification path is covered by
+the service-role SQL contract and the same fixture-backed row inspection, but
+CI never labels the fixture responses as live.
+
+### Hosted readiness and approval boundary
+
+Hosted setup is an operator-controlled deployment. No runbook step is
+automatically performed by `pipeline`, and the command never links, resets,
+migrates, or writes to a hosted database during preflight. Use the normal
+Supabase migration history in ascending order, make a restorable backup, and
+compare `supabase migration list --remote="$PROJECT_REF"` with the local
+migration files before any approved `supabase db push --remote="$PROJECT_REF"
+--skip-vault`. Review the M1-06 schema report after migration with `--status`
+and `--audit` before approving a small hosted ingestion run.
+
+Configure the URL, publishable key, service key, environment label, and
+optional GitHub token in server-side operator secrets. Never use a `NEXT_PUBLIC_`
+secret. Public repository discovery needs only read access; use the narrowest
+GitHub token that provides the intended public metadata/search budget, with no
+GitHub write permission. Verify the `project-logos` bucket remains public with
+the 2 MiB limit and PNG/JPEG/WebP MIME types; the pilot only registers pending
+candidates and does not upload image bytes.
+
+Remote writes are blocked unless an operator passes both
+`--allow-hosted-writes` and `--confirm-project-ref <ref>` for the URL-derived
+Supabase project reference. Custom remote hosts that do not expose a
+verifiable reference are blocked. This explicit CLI guard does not replace
+separate operator approval for any hosted migration or production write.
+Fixture validation, live GitHub reads, and hosted Supabase verification are
+three different checks and must be reported separately.
