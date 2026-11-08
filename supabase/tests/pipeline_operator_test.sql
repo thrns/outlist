@@ -99,7 +99,7 @@ select (select count(*) from public.ingestion_jobs) as jobs,
   (select count(*) from public.project_logos) as logos;
 create temporary table pipeline_report_call as
 select public.pipeline_operator_report() as report;
-select is((select report->>'report_version' from pipeline_report_call), 'm1-06-v2',
+select is((select report->>'report_version' from pipeline_report_call), 'm1-10-v3',
   'service role receives the versioned operational report');
 select is((select public.pipeline_operator_verify_run(gen_random_uuid())->>'pipeline_run_id' is not null), true,
   'service role can call bounded run-scoped persisted-row inspection');
