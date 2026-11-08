@@ -174,12 +174,22 @@ RLS and column-level grants limit public queries to published projects,
 available associated repositories, active taxonomy, approved logos, and
 approved alternatives. No browser role can write canonical data. The public
 logo bucket accepts normalized WebP output up to 2 MiB. Public bucket URLs
-bypass object read policies, so M1-05 uploads only after an explicit trusted
-operator approval. Discovery stores candidate provenance and review metadata
-but no image bytes. Official logos outrank approved GitHub owner avatars;
-avatars remain labeled as avatars. The resolver otherwise returns a
-deterministic letter fallback. SVG and arbitrary user-controlled object paths
-are excluded. Approval RPCs are service-role-only and fence concurrent work.
+bypass object read policies, so M1-05 uploads only after explicit trusted
+operator approval; random paths reduce guessing but do not provide access
+control. Discovery stores candidate provenance and review metadata but no image
+bytes. Every approval attempt uses its database token in the immutable path
+`<project-uuid>/<logo-uuid>/<approval-token>.webp` and uploads with no overwrite.
+The approval RPC commits the winning path and SHA-256 digest together. Database
+fencing alone cannot fence an external Storage request, so this path identity
+prevents a stale worker from changing a later winner. A private service-role
+attempt ledger supports cleanup of unreferenced uploads after errors or
+crashes. Reconciliation verifies existing bytes and restores only a confirmed
+missing object; a digest mismatch needs review. Legacy approved paths remain
+valid, and legacy rows without a digest are not restored automatically.
+Official logos outrank approved GitHub owner avatars; avatars remain labeled
+as avatars. The resolver otherwise returns a deterministic letter fallback.
+SVG and arbitrary user-controlled object paths are excluded. Browser roles have
+no Storage write policy; approval RPCs are service-role-only.
 
 Database types are generated from the migrated local database with the pinned
 Supabase CLI (`bun run supabase:types`) and then consumed by the browser, SSR,

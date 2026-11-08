@@ -209,14 +209,14 @@ isOneToOne: false
                   ]
                 },"project_logos": {
                   Row: {
-                    "approval_lease_expires_at": string | null,"approval_provenance": Json | null,"approval_token": string | null,"attribution_text": string | null,"candidate_key": string | null,"content_digest": string | null,"created_at": string,"id": string,"is_primary": boolean,"media_type": string,"origin": string,"project_id": string,"repository_id": string | null,"source_observed_at": string | null,"source_provenance": NonNullable<Json>,"source_record_id": string | null,"source_url": string,"storage_path": string | null,"updated_at": string,"verification_status": string,"verified_at": string | null,"verified_by": string | null
+                    "approval_lease_expires_at": string | null,"approval_provenance": Json | null,"approval_token": string | null,"approval_worker_id": string | null,"attribution_text": string | null,"candidate_key": string | null,"content_digest": string | null,"created_at": string,"id": string,"is_primary": boolean,"media_type": string,"origin": string,"project_id": string,"repository_id": string | null,"source_observed_at": string | null,"source_provenance": NonNullable<Json>,"source_record_id": string | null,"source_url": string,"storage_path": string | null,"updated_at": string,"verification_status": string,"verified_at": string | null,"verified_by": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "approval_lease_expires_at"?: string | null,"approval_provenance"?: Json | null,"approval_token"?: string | null,"attribution_text"?: string | null,"candidate_key"?: string | null,"content_digest"?: string | null,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"media_type": string,"origin": string,"project_id": string,"repository_id"?: string | null,"source_observed_at"?: string | null,"source_provenance"?: NonNullable<Json>,"source_record_id"?: string | null,"source_url": string,"storage_path"?: string | null,"updated_at"?: string,"verification_status"?: string,"verified_at"?: string | null,"verified_by"?: string | null
+                    "approval_lease_expires_at"?: string | null,"approval_provenance"?: Json | null,"approval_token"?: string | null,"approval_worker_id"?: string | null,"attribution_text"?: string | null,"candidate_key"?: string | null,"content_digest"?: string | null,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"media_type": string,"origin": string,"project_id": string,"repository_id"?: string | null,"source_observed_at"?: string | null,"source_provenance"?: NonNullable<Json>,"source_record_id"?: string | null,"source_url": string,"storage_path"?: string | null,"updated_at"?: string,"verification_status"?: string,"verified_at"?: string | null,"verified_by"?: string | null
                   }
                   Update: {
-                    "approval_lease_expires_at"?: string | null,"approval_provenance"?: Json | null,"approval_token"?: string | null,"attribution_text"?: string | null,"candidate_key"?: string | null,"content_digest"?: string | null,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"media_type"?: string,"origin"?: string,"project_id"?: string,"repository_id"?: string | null,"source_observed_at"?: string | null,"source_provenance"?: NonNullable<Json>,"source_record_id"?: string | null,"source_url"?: string,"storage_path"?: string | null,"updated_at"?: string,"verification_status"?: string,"verified_at"?: string | null,"verified_by"?: string | null
+                    "approval_lease_expires_at"?: string | null,"approval_provenance"?: Json | null,"approval_token"?: string | null,"approval_worker_id"?: string | null,"attribution_text"?: string | null,"candidate_key"?: string | null,"content_digest"?: string | null,"created_at"?: string,"id"?: string,"is_primary"?: boolean,"media_type"?: string,"origin"?: string,"project_id"?: string,"repository_id"?: string | null,"source_observed_at"?: string | null,"source_provenance"?: NonNullable<Json>,"source_record_id"?: string | null,"source_url"?: string,"storage_path"?: string | null,"updated_at"?: string,"verification_status"?: string,"verified_at"?: string | null,"verified_by"?: string | null
                   }
                   Relationships: [
                     {
@@ -654,7 +654,7 @@ isOneToOne: false
           }
           Functions: {
             "approve_project_logo_candidate":
-{ Args: { "p_approval_provenance": Json,"p_approval_token": string,"p_content_digest": string,"p_logo_id": string,"p_media_type": string,"p_storage_path": string }; Returns: Json
+{ Args: { "p_approval_provenance": Json,"p_approval_token": string,"p_content_digest": string,"p_logo_id": string,"p_media_type": string,"p_storage_path": string,"p_worker_id": string }; Returns: Json
                            },
 "claim_discovery_partitions":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
@@ -672,10 +672,10 @@ isOneToOne: false
             }[]
                            },
 "claim_project_logo_approval":
-{ Args: { "p_logo_id": string }; Returns: Json
+{ Args: { "p_logo_id": string,"p_worker_id": string }; Returns: Json
                            },
 "claim_project_logo_cleanup":
-{ Args: { "p_approval_token": string,"p_logo_id": string }; Returns: Json
+{ Args: { "p_approval_token": string,"p_logo_id": string,"p_worker_id": string }; Returns: Json
                            },
 "commit_discovery_page":
 { Args: { "p_candidates": Json,"p_children"?: Json,"p_fetched_at": string,"p_http_status": number,"p_incomplete_results": boolean,"p_lease_seconds"?: number,"p_lease_token": string,"p_next_state": string,"p_page": number,"p_per_page": number,"p_query_fingerprint": string,"p_query_id": string,"p_source_metadata": Json,"p_source_url": string,"p_total_count": number,"p_worker_id": string }; Returns: Json
@@ -704,6 +704,9 @@ isOneToOne: false
 "finish_github_repository_assessment_job":
 { Args: { "p_job_id": string }; Returns: Json
                            },
+"list_project_logo_cleanup_attempts":
+{ Args: { "p_logo_id": string }; Returns: Json
+                           },
 "register_project_logo_candidate":
 { Args: { "p_attribution_text": string,"p_candidate_key": string,"p_origin": string,"p_project_id": string,"p_repository_id": string,"p_source_observed_at": string,"p_source_provenance": Json,"p_source_record_id": string,"p_source_url": string }; Returns: string
                            },
@@ -711,7 +714,7 @@ isOneToOne: false
 { Args: { "p_lease_token": string,"p_query_id": string,"p_worker_id": string }; Returns: undefined
                            },
 "release_project_logo_approval":
-{ Args: { "p_approval_token": string,"p_logo_id": string }; Returns: Json
+{ Args: { "p_approval_token": string,"p_logo_id": string,"p_worker_id": string }; Returns: Json
                            },
 "set_project_logo_review_status":
 { Args: { "p_logo_id": string,"p_status": string }; Returns: Json

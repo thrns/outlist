@@ -49,6 +49,11 @@ describe("project logo resolution", () => {
 
   it("requires a valid UUID project-scoped storage path", () => {
     expect(isValidProjectLogoStoragePath(projectId, approvedOfficial.storagePath)).toBe(true);
+    expect(isValidProjectLogoStoragePath(projectId,
+      `${projectId}/${approvedOfficial.id}/44444444-4444-4444-8444-444444444444.webp`)).toBe(true);
+    expect(isValidProjectLogoStoragePath(projectId,
+      `${projectId}/${approvedOfficial.id}/44444444-4444-4444-8444-444444444444.png`)).toBe(false);
+    expect(isValidProjectLogoStoragePath(projectId, `${projectId}/${approvedOfficial.id}.png`)).toBe(true);
     expect(isValidProjectLogoStoragePath(projectId, "https://example.test/logo.webp")).toBe(false);
     expect(isValidProjectLogoStoragePath(projectId, `99999999-9999-4999-8999-999999999999/${approvedOfficial.id}.webp`)).toBe(false);
   });

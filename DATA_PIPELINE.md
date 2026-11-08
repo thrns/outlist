@@ -496,27 +496,57 @@ resized within a 512 by 512 box, stripped of metadata, encoded as WebP, capped
 at 1.8 MB, and SHA-256 digested. No arbitrary site crawler, README parser,
 remote redirect follower, or general user-image downloader is present.
 
-Approval first claims a candidate for ten minutes with a database token. The
-CLI then obtains and validates the image, uploads to the existing bucket at
-`<project-uuid>/<logo-uuid>.webp`, and calls a service-role-only RPC that
-rechecks project and repository eligibility, stores the digest and approval
-provenance, selects a primary logo, and resolves the review item atomically.
-Official approval has priority over an avatar and preserves any existing
-approved official primary. A public avatar cannot displace an approved official
-logo. No review action changes project publication, license, or quality status.
+Approval first claims a candidate for ten minutes with a worker UUID and a
+separate random database fencing token. The token is also the identity of one immutable object at
+`<project-uuid>/<logo-uuid>/<approval-token>.webp`. The CLI uses
+`upsert: false`; a retry or a second worker always gets a different path, and
+approved objects are never overwritten. The approval RPC rechecks the candidate
+identity, pending state, unexpired token, exact token-derived path, image
+digest, media type, operator provenance, and current project/repository
+eligibility. It records the winning path and SHA-256 digest together, selects a
+primary logo, and resolves the review item atomically. Official approval keeps
+priority over avatars and preserves an existing official primary. No review
+action changes project publication, license, or quality status.
 
-Storage and PostgreSQL are separate systems. If upload or commit returns an
-error, a cleanup RPC checks the row under lock and rotates the claim token
-before removing the deterministic object path. If the database actually
-committed, cleanup sees the approved row and leaves its object intact. If
-removal fails, the ten-minute cleanup lease remains as a fence and
-reconciliation can retry after that lease expires. A process interruption
-leaves a pending candidate and an expiring claim. The `--reconcile <id>`
-command removes an orphan for a non-approved candidate, or reuploads
-an approved object only if its reviewed source still reproduces the recorded
-digest. If that source has changed, manual review is required. Revocation clears
-the database path first and then deletes the public object; a failed deletion
-is reported and can be retried with reconciliation.
+Database fencing alone cannot protect Storage: Storage writes happen outside a
+PostgreSQL transaction, so a worker can finish uploading after its lease has
+expired. Token-scoped object identity isolates that late upload from a later
+winner. A private, service-role-only attempt ledger records every path at
+claim time. Cleanup RPCs return only attempt paths that are not referenced by
+an approved row; they never substitute a candidate's current path for a stale
+worker's path. Failed removal remains discoverable for another reconciliation
+pass. A worker that resumes after a prior cleanup can recreate only its own
+orphan path, which the ledger can identify and remove later.
+
+An ambiguous database response is accepted as recovered only if the approved
+row contains that exact attempt path and digest and a Storage download hashes
+to the same digest. Another attempt's approved row is never treated as proof of
+success. Rejection and revocation clear the database pointer first, mark all
+attempt paths for cleanup, and remove only those unreferenced paths. A stale
+reconciliation cannot restore a revoked asset: it checks approval before
+restoring, uses a no-overwrite upload, then checks approval and the downloaded
+digest again before reporting success. Concurrent restorations converge on the
+same immutable object; if an object already exists with different bytes,
+reconciliation reports an integrity error and leaves it unchanged.
+
+`--reconcile <id>` lists and removes orphan attempt objects for pending,
+rejected, or revoked candidates. For approved candidates it first downloads and
+hashes an existing object. It restores only an object confirmed missing, and
+only when the reviewed source still normalizes to the recorded digest. Legacy
+approved two-segment paths remain valid and are preserved through migration.
+Legacy rows without a recorded digest continue resolving as before, but a
+missing or mismatched legacy object needs manual review before restoration.
+
+The bucket remains public. Supabase public-bucket downloads can bypass object
+read policies, including before a database row is approved; opaque random
+attempt paths reduce accidental discovery but are not access control. Browser
+roles have no Storage write policies, and all upload/remove operations use the
+trusted server client. The pipeline minimizes exposure by uploading only after
+operator approval, never overwriting an object, and removing unreferenced
+attempts as cleanup runs. A Storage outage can delay orphan removal, and a
+paused stale process can upload its own orphan after cleanup; the durable ledger
+keeps that path available for a later retry without affecting the approved
+image.
 
 ```bash
 bun run logos -- --discover --dry-run

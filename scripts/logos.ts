@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { createGitHubClient } from "../src/lib/github/client";
 import { validateGitHubAvatarUrl } from "../src/lib/logos/github-avatar";
@@ -46,6 +46,7 @@ interface LogoDatabase {
   storage: {
     from(bucket: string): {
       upload(path: string, data: Buffer, options: { contentType: string; upsert: boolean; cacheControl: string }): Promise<{ data: unknown; error: DbError | null }>;
+      download(path: string): Promise<{ data: Blob | null; error: DbError | null }>;
       remove(paths: string[]): Promise<{ data: unknown; error: DbError | null }>;
       exists(path: string): Promise<{ data: boolean; error: DbError | null }>;
     };
@@ -307,25 +308,39 @@ async function registerOfficial(args: LogoArguments, db: LogoDatabase, dependenc
 
 async function approve(args: LogoArguments, db: LogoDatabase, dependencies: LogoCliDependencies, stdout: (line: string) => void, stderr: (line: string) => void): Promise<number> {
   const candidate = await loadCandidate(db, args.logoId!);
-  const claimed = await db.rpc("claim_project_logo_approval", { p_logo_id: candidate.id });
+  const workerId = randomUUID();
+  const claimed = await db.rpc("claim_project_logo_approval", { p_logo_id: candidate.id, p_worker_id: workerId });
   if (claimed.error || !claimed.data || typeof claimed.data !== "object") throw new Error("Could not claim this logo candidate for approval.");
   const claimData = claimed.data as Record<string, unknown>;
   if (claimData.status === "already_approved") {
+    if (claimData.storage_path !== candidate.storage_path || claimData.content_digest !== candidate.content_digest
+      || !candidate.storage_path || !candidate.content_digest
+      || !(await objectMatchesDigest(db, candidate.storage_path, candidate.content_digest))) {
+      stderr(`${JSON.stringify({ event: "logo_approval_integrity_error", logo_id: candidate.id, status: "review_required" })}\n`);
+      return 1;
+    }
     stdout(`${JSON.stringify({ event: "logo_approval_skipped", logo_id: candidate.id, status: "already_approved" })}\n`);
     return 0;
   }
   if (claimData.status !== "claimed" || typeof claimData.approval_token !== "string") throw new Error("Database returned an invalid approval claim.");
   const approvalToken = claimData.approval_token;
-  const path = `${candidate.project_id}/${candidate.id}.webp`;
+  const expectedPath = `${candidate.project_id}/${candidate.id}/${approvalToken}.webp`;
+  if (claimData.storage_path !== expectedPath) {
+    await db.rpc("release_project_logo_approval", { p_logo_id: candidate.id, p_approval_token: approvalToken, p_worker_id: workerId });
+    throw new Error("Database returned an invalid immutable Storage path.");
+  }
+  const path = expectedPath;
   let stage = "source_acquisition";
   let uploadAttempted = false;
+  let contentDigest: string | null = null;
   try {
     const input = await readApprovalInput(candidate, args, dependencies);
     stage = "image_validation";
     const normalized = await normalizeLogoImage(input.bytes);
+    contentDigest = normalized.contentDigest;
     stage = "storage_upload";
     uploadAttempted = true;
-    const upload = await db.storage.from("project-logos").upload(path, normalized.bytes, { contentType: "image/webp", upsert: true, cacheControl: "31536000" });
+    const upload = await db.storage.from("project-logos").upload(path, normalized.bytes, { contentType: "image/webp", upsert: false, cacheControl: "31536000" });
     if (upload.error) throw new Error("Storage upload failed.");
     const provenance = {
       operator_action: true, source_mode: input.mode, processor: "sharp-webp-v1",
@@ -334,42 +349,65 @@ async function approve(args: LogoArguments, db: LogoDatabase, dependencies: Logo
     };
     stage = "database_commit";
     const commit = await db.rpc("approve_project_logo_candidate", {
-      p_logo_id: candidate.id, p_approval_token: approvalToken, p_storage_path: path, p_content_digest: normalized.contentDigest,
+      p_logo_id: candidate.id, p_worker_id: workerId, p_approval_token: approvalToken,
+      p_storage_path: path, p_content_digest: normalized.contentDigest,
       p_media_type: "image/webp", p_approval_provenance: provenance,
     });
     if (commit.error) throw new Error("Database commit failed.");
-    stdout(`${JSON.stringify({ event: "logo_approved", logo_id: candidate.id, project_id: candidate.project_id, origin: candidate.origin, status: "approved", content_digest: normalized.contentDigest })}\n`);
+    const commitData = commit.data && typeof commit.data === "object" ? commit.data as Record<string, unknown> : null;
+    if ((commitData?.status !== "approved" && commitData?.status !== "already_approved")
+      || commitData.storage_path !== path || commitData.content_digest !== normalized.contentDigest) {
+      throw new Error("Database returned a different approved Storage identity.");
+    }
+    if (commitData.status === "already_approved") {
+      if (!(await objectMatchesDigest(db, path, normalized.contentDigest))) throw new Error("Approved Storage bytes do not match the committed digest.");
+      stdout(`${JSON.stringify({ event: "logo_approval_recovered", logo_id: candidate.id, status: "approved", content_digest: normalized.contentDigest })}\n`);
+      return 0;
+    }
+    stdout(`${JSON.stringify({ event: "logo_approved", logo_id: candidate.id, project_id: candidate.project_id, origin: candidate.origin, status: "approved", content_digest: normalized.contentDigest, storage_path: path })}\n`);
     return 0;
-  } catch {
+  } catch (error) {
     if (uploadAttempted) {
-      const cleanupClaim = await Promise.resolve(db.rpc("claim_project_logo_cleanup", { p_logo_id: candidate.id, p_approval_token: approvalToken }))
+      if (stage === "database_commit" && contentDigest
+        && await committedAttemptMatches(db, candidate.id, path, contentDigest)) {
+        stdout(`${JSON.stringify({ event: "logo_approval_recovered", logo_id: candidate.id,
+          status: "approved", content_digest: contentDigest, storage_path: path })}\n`);
+        return 0;
+      }
+      const cleanupClaim = await Promise.resolve(db.rpc("claim_project_logo_cleanup", {
+        p_logo_id: candidate.id, p_approval_token: approvalToken, p_worker_id: workerId,
+      }))
         .catch(() => ({ data: null, error: { message: "Cleanup claim failed." } }));
       const cleanupData = cleanupClaim.data && typeof cleanupClaim.data === "object" ? cleanupClaim.data as Record<string, unknown> : null;
-      if (cleanupData?.status === "already_approved" && cleanupData.storage_path === path) {
+      if (cleanupData?.status === "already_approved" && cleanupData.storage_path === path
+        && cleanupData.content_digest === contentDigest && contentDigest
+        && await objectMatchesDigest(db, path, contentDigest)) {
         stdout(`${JSON.stringify({ event: "logo_approval_recovered", logo_id: candidate.id, status: "approved" })}\n`);
         return 0;
       }
-      if (cleanupData?.status === "cleanup_claimed" && typeof cleanupData.approval_token === "string") {
+      if (cleanupData?.status === "cleanup_claimed" && cleanupData.storage_path === path) {
         const removed = await removeObjectOrConfirmAbsent(db, path);
         if (removed) {
-          const release = await Promise.resolve(db.rpc("release_project_logo_approval", {
-            p_logo_id: candidate.id, p_approval_token: cleanupData.approval_token,
-          })).catch(() => ({ data: null, error: { message: "Cleanup claim release failed." } }));
-          const released = release.data && typeof release.data === "object" && "status" in release.data
-            && release.data.status === "claim_released";
-          stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "completed", claim_released: released })}\n`);
+          stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "completed",
+            message: safeMessage(error), approval_reported: false })}\n`);
           return 1;
         }
-        stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "reconcile_required", claim_released: false })}\n`);
+        stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "reconcile_required",
+          message: safeMessage(error), approval_reported: false })}\n`);
         return 1;
       }
-      stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "claim_conflict_reconcile_required", claim_released: false })}\n`);
+      stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id,
+        cleanup: cleanupData?.status === "integrity_conflict" ? "integrity_conflict_reconcile_required" : "claim_conflict_reconcile_required",
+        message: safeMessage(error), approval_reported: false })}\n`);
       return 1;
     }
-    const release = await Promise.resolve(db.rpc("release_project_logo_approval", { p_logo_id: candidate.id, p_approval_token: approvalToken }))
+    const release = await Promise.resolve(db.rpc("release_project_logo_approval", {
+      p_logo_id: candidate.id, p_approval_token: approvalToken, p_worker_id: workerId,
+    }))
       .catch(() => ({ data: null, error: { message: "Approval claim release failed." } }));
     const releaseStatus = release.data && typeof release.data === "object" && "status" in release.data ? release.data.status : null;
-    stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "not_needed", claim_released: releaseStatus === "claim_released" })}\n`);
+    stderr(`${JSON.stringify({ event: "logo_approval_failed", stage, logo_id: candidate.id, cleanup: "not_needed",
+      message: safeMessage(error), claim_released: releaseStatus === "claim_released" })}\n`);
     return 1;
   }
 }
@@ -379,12 +417,18 @@ async function setReviewStatus(args: LogoArguments, db: LogoDatabase, stdout: (l
   const status = args.action === "reject" ? "rejected" : "revoked";
   const result = await db.rpc("set_project_logo_review_status", { p_logo_id: candidate.id, p_status: status });
   if (result.error) throw new Error("Logo review status update failed.");
-  const oldPath = typeof result.data === "object" && result.data !== null && "storage_path" in result.data && typeof result.data.storage_path === "string"
-    ? result.data.storage_path : null;
-  const cleanupPath = oldPath ?? `${candidate.project_id}/${candidate.id}.webp`;
-  const cleanup = await removeObject(db, cleanupPath);
-  if (cleanup) {
-    stderr(`${JSON.stringify({ event: "logo_status_saved_cleanup_failed", logo_id: candidate.id, status, reconcile_required: true })}\n`);
+  const cleanupPaths = result.data && typeof result.data === "object" && "cleanup_paths" in result.data
+    && Array.isArray(result.data.cleanup_paths)
+    ? result.data.cleanup_paths.flatMap((item) => item && typeof item === "object" && "storage_path" in item
+      && typeof item.storage_path === "string" ? [item.storage_path] : [])
+    : [];
+  let cleanupFailed = !(result.data && typeof result.data === "object" && "cleanup_paths" in result.data
+    && Array.isArray(result.data.cleanup_paths));
+  for (const cleanupPath of cleanupPaths) {
+    if (!(await removeObjectOrConfirmAbsent(db, cleanupPath))) cleanupFailed = true;
+  }
+  if (cleanupFailed) {
+    stderr(`${JSON.stringify({ event: "logo_status_saved_cleanup_failed", logo_id: candidate.id, status, reconcile_required: true, cleanup_paths: cleanupPaths.length })}\n`);
     return 1;
   }
   stdout(`${JSON.stringify({ event: "logo_review_status_updated", logo_id: candidate.id, status })}\n`);
@@ -393,17 +437,21 @@ async function setReviewStatus(args: LogoArguments, db: LogoDatabase, stdout: (l
 
 async function reconcile(args: LogoArguments, db: LogoDatabase, dependencies: LogoCliDependencies, stdout: (line: string) => void): Promise<number> {
   let candidate = await loadCandidate(db, args.logoId!);
-  const path = `${candidate.project_id}/${candidate.id}.webp`;
   if (candidate.verification_status === "pending_review") {
-    const claimed = await db.rpc("claim_project_logo_approval", { p_logo_id: candidate.id });
+    const workerId = randomUUID();
+    const claimed = await db.rpc("claim_project_logo_approval", { p_logo_id: candidate.id, p_worker_id: workerId });
     if (claimed.error || !claimed.data || typeof claimed.data !== "object") throw new Error("Could not claim the pending logo candidate for cleanup.");
     const claimData = claimed.data as Record<string, unknown>;
     if (claimData.status === "already_approved") {
       candidate = await loadCandidate(db, candidate.id);
     } else if (claimData.status === "claimed" && typeof claimData.approval_token === "string") {
-      const cleanup = await removeObject(db, path);
-      if (cleanup) throw new Error("Could not remove an orphaned public Storage object; retry reconciliation.");
-      const released = await db.rpc("release_project_logo_approval", { p_logo_id: candidate.id, p_approval_token: claimData.approval_token });
+      const cleanupPaths = await listCleanupPaths(db, candidate.id);
+      for (const cleanupPath of cleanupPaths) {
+        if (!(await removeObjectOrConfirmAbsent(db, cleanupPath))) throw new Error("Could not remove an orphaned public Storage object; retry reconciliation.");
+      }
+      const released = await db.rpc("release_project_logo_approval", {
+        p_logo_id: candidate.id, p_approval_token: claimData.approval_token, p_worker_id: workerId,
+      });
       const releaseData = released.data && typeof released.data === "object" ? released.data as Record<string, unknown> : null;
       if (released.error || releaseData?.status !== "claim_released") {
         throw new Error("The orphaned object was removed, but the cleanup claim was not released; retry reconciliation.");
@@ -415,23 +463,62 @@ async function reconcile(args: LogoArguments, db: LogoDatabase, dependencies: Lo
     }
   }
   if (candidate.verification_status === "rejected" || candidate.verification_status === "revoked") {
-    const cleanup = await removeObject(db, path);
-    if (cleanup) throw new Error("Could not remove an orphaned public Storage object; retry reconciliation.");
+    const cleanupPaths = await listCleanupPaths(db, candidate.id);
+    for (const cleanupPath of cleanupPaths) {
+      if (!(await removeObjectOrConfirmAbsent(db, cleanupPath))) throw new Error("Could not remove an orphaned public Storage object; retry reconciliation.");
+    }
+    const current = await loadCandidate(db, candidate.id);
+    if (current.verification_status !== candidate.verification_status) throw new Error("Logo status changed during orphan cleanup; retry reconciliation.");
     stdout(`${JSON.stringify({ event: "logo_reconciliation_complete", logo_id: candidate.id, status: candidate.verification_status, action: "orphan_removed_or_absent" })}\n`);
     return 0;
   }
-  const input = await readApprovalInput(candidate, args, dependencies);
-  const normalized = await normalizeLogoImage(input.bytes);
-  if (normalized.contentDigest !== candidate.content_digest) throw new Error("Current source does not reproduce the approved content digest; manual review is required.");
-  const upload = await db.storage.from("project-logos").upload(path, normalized.bytes, { contentType: "image/webp", upsert: true, cacheControl: "31536000" });
-  if (upload.error) throw new Error("Could not restore the approved Storage object.");
-  const stillApproved = await loadCandidate(db, candidate.id);
-  if (stillApproved.verification_status !== "approved" || stillApproved.content_digest !== normalized.contentDigest
-    || stillApproved.storage_path !== path) {
-    if (await removeObject(db, path)) throw new Error("Logo changed during reconciliation; orphan cleanup is required.");
-    throw new Error("Logo changed during reconciliation; the stale object was removed.");
+  if (!candidate.storage_path || !candidate.content_digest) throw new Error("Approved legacy asset has no recorded SHA-256 digest; review is required before reconciliation.");
+  const path = candidate.storage_path;
+  const digest = candidate.content_digest;
+  let object = await downloadObject(db, path);
+  let restored = false;
+  if (object.kind === "present") {
+    if (digestBytes(object.bytes) !== digest) throw new Error("Approved Storage object digest mismatch; review is required and the object was left unchanged.");
+  } else {
+    const input = await readApprovalInput(candidate, args, dependencies);
+    const normalized = await normalizeLogoImage(input.bytes);
+    if (normalized.contentDigest !== digest) throw new Error("Current source does not reproduce the approved content digest; manual review is required.");
+    const beforeUpload = await loadCandidate(db, candidate.id);
+    if (beforeUpload.verification_status !== "approved" || beforeUpload.storage_path !== path || beforeUpload.content_digest !== digest) {
+      throw new Error("Logo approval or revocation changed before restoration; no object was uploaded.");
+    }
+    const upload = await db.storage.from("project-logos").upload(path, normalized.bytes, { contentType: "image/webp", upsert: false, cacheControl: "31536000" });
+    if (upload.error) {
+      object = await downloadObject(db, path);
+      if (object.kind !== "present" || digestBytes(object.bytes) !== digest) {
+        if (object.kind === "present") throw new Error("Storage object conflicts with the approved digest; review is required and no overwrite was attempted.");
+        throw new Error("Could not restore the approved Storage object; no overwrite was attempted.");
+      }
+    } else {
+      restored = true;
+    }
   }
-  stdout(`${JSON.stringify({ event: "logo_reconciliation_complete", logo_id: candidate.id, status: "approved", action: "approved_object_restored", content_digest: normalized.contentDigest })}\n`);
+  const stillApproved = await loadCandidate(db, candidate.id);
+  if (stillApproved.verification_status !== "approved" || stillApproved.content_digest !== digest || stillApproved.storage_path !== path) {
+    const removed = await removeObjectOrConfirmAbsent(db, path);
+    if (!removed) throw new Error("Logo changed during reconciliation; stale object cleanup is required.");
+    throw new Error("Logo changed during reconciliation; unreferenced object was removed.");
+  }
+  const finalObject = await downloadObject(db, path);
+  if (finalObject.kind !== "present" || digestBytes(finalObject.bytes) !== digest) {
+    throw new Error("Approved Storage bytes failed final digest verification; review is required.");
+  }
+  const cleanupPaths = await listCleanupPaths(db, candidate.id);
+  for (const cleanupPath of cleanupPaths) {
+    if (!(await removeObjectOrConfirmAbsent(db, cleanupPath))) throw new Error("Approved object is valid, but orphan cleanup failed; retry reconciliation.");
+  }
+  const finalRow = await loadCandidate(db, candidate.id);
+  if (finalRow.verification_status !== "approved" || finalRow.storage_path !== path || finalRow.content_digest !== digest) {
+    const removed = await removeObjectOrConfirmAbsent(db, path);
+    if (!removed) throw new Error("Logo was revoked during reconciliation; stale object cleanup is required.");
+    throw new Error("Logo was revoked during reconciliation; unreferenced object was removed.");
+  }
+  stdout(`${JSON.stringify({ event: "logo_reconciliation_complete", logo_id: candidate.id, status: "approved", action: restored ? "approved_object_restored" : "approved_object_verified", content_digest: digest })}\n`);
   return 0;
 }
 
@@ -490,6 +577,48 @@ async function removeObjectOrConfirmAbsent(db: LogoDatabase, path: string): Prom
   } catch { return false; }
 }
 
+async function objectMatchesDigest(db: LogoDatabase, path: string, expectedDigest: string): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/.test(expectedDigest)) return false;
+  try {
+    const result = await db.storage.from("project-logos").download(path);
+    if (result.error || !result.data) return false;
+    return digestBytes(Buffer.from(await result.data.arrayBuffer())) === expectedDigest;
+  } catch { return false; }
+}
+
+async function committedAttemptMatches(db: LogoDatabase, logoId: string, path: string, expectedDigest: string): Promise<boolean> {
+  try {
+    const committed = await loadCandidate(db, logoId);
+    return committed.verification_status === "approved" && committed.storage_path === path
+      && committed.content_digest === expectedDigest && await objectMatchesDigest(db, path, expectedDigest);
+  } catch { return false; }
+}
+
+type DownloadedObject = { kind: "present"; bytes: Buffer } | { kind: "missing" };
+async function downloadObject(db: LogoDatabase, path: string): Promise<DownloadedObject> {
+  let result: { data: Blob | null; error: DbError | null };
+  try { result = await db.storage.from("project-logos").download(path); }
+  catch { throw new Error("Could not verify approved Storage bytes; reconciliation stopped."); }
+  if (result.error) {
+    if (isMissingObjectError(result.error)) return { kind: "missing" };
+    throw new Error("Could not verify approved Storage bytes; reconciliation stopped.");
+  }
+  if (!result.data) throw new Error("Storage returned no bytes for the approved object.");
+  return { kind: "present", bytes: Buffer.from(await result.data.arrayBuffer()) };
+}
+
+function isMissingObjectError(error: DbError): boolean {
+  return error.status === 404 || error.statusCode === "404" || error.code === "NoSuchKey"
+    || /(?:object|key|file).{0,30}not found/i.test(error.message);
+}
+
+async function listCleanupPaths(db: LogoDatabase, logoId: string): Promise<string[]> {
+  const result = await db.rpc("list_project_logo_cleanup_attempts", { p_logo_id: logoId });
+  if (result.error || !Array.isArray(result.data)) throw new Error("Could not list recoverable logo Storage attempts.");
+  return result.data.flatMap((item) => item && typeof item === "object" && "storage_path" in item
+    && typeof item.storage_path === "string" ? [item.storage_path] : []);
+}
+
 function isEligibleRepository(repository: z.infer<typeof repositorySchema>, projectId: string): boolean {
   return repository.project_id === projectId && repository.provider === "github"
     && /^[1-9][0-9]{0,18}$/.test(repository.provider_repository_id)
@@ -509,9 +638,10 @@ function validateTrustedSourceUrl(raw: string): string {
 }
 
 function digestText(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+function digestBytes(value: Buffer): string { return createHash("sha256").update(value).digest("hex"); }
 function safeMessage(error: unknown): string {
   if (error instanceof z.ZodError) return "Database or source metadata failed validation.";
-  if (error instanceof Error && /^(Logo |GitHub avatar|Official candidate|Candidate registration|Project |Could not |Only |Current source|Operator |Approval |Logo review|Repository |Avatar |Unknown |Discovery |Choose |An |No |Normalized )/.test(error.message)) return error.message;
+  if (error instanceof Error && /^(Logo |GitHub avatar|Official candidate|Candidate registration|Project |Could not |Only |Current source|Operator |Approval |Logo review|Repository |Avatar |Unknown |Discovery |Choose |An |No |Normalized |Storage |Approved legacy|Approved Storage|Database returned )/.test(error.message)) return error.message;
   return "Logo operation failed; inspect the structured stage output and retry.";
 }
 

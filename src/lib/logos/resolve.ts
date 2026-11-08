@@ -40,12 +40,13 @@ export type ResolvedProjectLogo =
     };
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const storagePathPattern = new RegExp(`^(${UUID})/(${UUID})\\.(png|jpg|jpeg|webp)$`, "i");
+const storagePathPattern = new RegExp(`^(${UUID})/(${UUID})(?:/(${UUID}))?\\.(png|jpg|jpeg|webp)$`, "i");
 
 export function isValidProjectLogoStoragePath(projectId: string, storagePath: string | null): storagePath is string {
   if (!storagePath) return false;
   const match = storagePathPattern.exec(storagePath);
-  return Boolean(match && match[1]?.toLowerCase() === projectId.toLowerCase());
+  return Boolean(match && match[1]?.toLowerCase() === projectId.toLowerCase()
+    && (!match[3] || match[4]?.toLowerCase() === "webp"));
 }
 
 /** Resolve only rows explicitly marked approved and backed by a project-scoped object path. */

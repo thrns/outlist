@@ -168,18 +168,21 @@ the stable-ID GitHub API response and creates a pending review item; it does not
 crawl homepages or README images. Official candidates are registered with
 operator attribution and remain pending until an explicit approval command.
 
-The `project-logos` bucket is public and capped at 2 MiB. Public bucket
-downloads can work by direct URL before a metadata RLS row is approved, so no
-candidate bytes are uploaded during discovery. Explicit approval decodes only
-PNG/JPEG/WebP, enforces download and pixel limits, rejects redirects, strips
-metadata, normalizes to WebP, and uploads to a project-scoped UUID path. A
-database approval claim prevents concurrent approvals. Failed upload or commit
-responses use a cleanup claim before removing an object; ambiguous commits that
-actually succeeded preserve the approved asset. `--reconcile` cleans an
-interrupted pending upload or restores an approved object when the reviewed
-source still reproduces its recorded digest. See [Data pipeline](DATA_PIPELINE.md)
-for the trust boundary and remaining limitations. The demo UI keeps its
-existing letter fallback; no public UI redesign is part of M1-05.
+The `project-logos` bucket is public and capped at 2 MiB. Direct object URLs can
+be readable before a metadata row is approved, so discovery never uploads
+candidate bytes. Explicit approval decodes only PNG/JPEG/WebP, enforces input
+and pixel limits, strips metadata, normalizes to WebP, and uploads without
+overwrite to `<project-uuid>/<logo-uuid>/<approval-token>.webp`. Database
+fencing cannot stop a Storage write after a lease expires; unique token paths
+ensure a stale upload cannot replace the next worker's image. The winning path
+and SHA-256 digest are committed together, and a private attempt ledger supports
+safe orphan cleanup. Reconciliation verifies downloaded bytes, restores only a
+confirmed missing object, and refuses digest mismatches. Legacy approved paths
+remain valid; old records without digests require manual review before a
+missing object can be restored. Public bucket URLs are not access control, and
+random attempt paths are not confidential. See [Data pipeline](DATA_PIPELINE.md)
+for recovery and exposure details. The demo UI keeps its existing letter
+fallback; no public UI redesign is part of M1-05.
 
 ### Real authentication integration checks
 
