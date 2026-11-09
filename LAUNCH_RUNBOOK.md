@@ -18,11 +18,10 @@ CI.
 
 `bun run launch:preflight` prints only whether variables are configured. It
 does not print values. Hosted preflight also checks an HTTPS public origin and
-requires operator attestations for Supabase redirect configuration and real
-OTP email delivery. Set `OUTLIST_PUBLIC_ORIGIN`,
-`OUTLIST_AUTH_REDIRECTS_VERIFIED=true`, and
-`OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED=true` only after completing those checks.
-These are preflight inputs, not application runtime settings.
+checks Supabase Auth provider state, disabled public signup, and a nonempty
+administrator allowlist. Set `OUTLIST_PUBLIC_ORIGIN` to the deployed HTTPS
+origin. Password sign-in does not use an email callback or depend on Auth email
+delivery.
 
 Use separate Supabase projects, key sets, GitHub secrets, app deployment
 environments, domains, and Auth settings for development, staging, and
@@ -54,15 +53,13 @@ execution from a controlled workstation or job environment.
 
 Terminate HTTPS at the hosting edge, attach the chosen domain, and confirm the
 application is only served over HTTPS. The app sets secure session cookies in
-production. Set the Supabase Auth Site URL to the deployed origin and allow only
-the intended application origins. This app asks administrators to enter the
-email OTP directly; it does not depend on a broad email-link redirect list.
-Use a production SMTP provider and sender identity, configure SPF/DKIM/DMARC,
-and verify that the configured Auth email template contains `{{ .Token }}`.
-Complete an actual OTP delivery and sign-in with the provisioned allowlisted
-administrator before beginning editorial review. Supabase's default test SMTP
-is not production email delivery. Create the Auth user and add its returned UUID
-to `public.admin_users` through the trusted administrative steps in
+production. In Supabase **Authentication → Sign In / Providers**, keep the
+Email provider enabled for password authentication, keep **Allow new users to
+sign up** disabled, and keep email confirmation enabled. Confirm that each
+administrator controls their intended email before marking it confirmed.
+There is no OTP, Magic Link, registration, email callback, or public
+password-reset flow in the application. Create or configure the Auth user and
+add its returned UUID to `public.admin_users` using the trusted steps in
 [ADMIN_AUTH.md](ADMIN_AUTH.md); never add an administrator in a migration or
 through public signup.
 
@@ -147,9 +144,7 @@ following environment and checks:
 export PROJECT_REF="<reviewed-project-ref>"
 export OUTLIST_SUPABASE_ENVIRONMENT=production
 export OUTLIST_PUBLIC_ORIGIN="https://<deployed-domain>"
-# Set these only after manually verifying the exact Auth URL allowlist and a real OTP delivery.
-export OUTLIST_AUTH_REDIRECTS_VERIFIED=true
-export OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED=true
+# Verify this is the deployed HTTPS origin before running the preflight.
 
 bun run launch:preflight -- --confirm-project-ref "$PROJECT_REF"
 bun run pipeline -- --status
@@ -267,7 +262,7 @@ Also verify in a private browser session that an unpublished slug returns the
 not-found state, while the deliberately published project appears in anonymous
 search and detail pages. Verify filters by category, license, and language;
 verify the project logo or deterministic fallback and its source links; verify
-the admin review page requires OTP and an allowlisted Auth UUID. A catalog
+the admin review page requires password authentication and an allowlisted Auth UUID. A catalog
 database failure should produce the public error state or an API `503` with no
 sample-project fallback or secret details. A short or empty API query has its
 documented empty response; malformed input returns `400`.
@@ -341,4 +336,4 @@ database before declaring the pilot complete.
 
 These are future operator acceptance targets. M1-10 has not run the hosted
 migrations, deployed the website, ingested a real GitHub candidate, performed
-hosted OTP delivery, or published a real project.
+a hosted administrator sign-in, or published a real project.

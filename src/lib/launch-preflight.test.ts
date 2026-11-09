@@ -212,8 +212,40 @@ describe("launch preflight", () => {
     expect(report.categories.status).toBe("ready");
     expect(report.storage.status).toBe("ready");
     expect(report.public_catalog).toMatchObject({ status: "ready", public_item_count: 2 });
+    expect(report.admin_authorization).toMatchObject({
+      status: "ready",
+      allowlisted_admin_count: 1,
+      signups_disabled: true,
+      email_password_enabled: true,
+    });
     expect(report.unpublished_projects).toBe(4);
     expect(report.pending_review_projects).toBe(1);
     expect(report.hosted_verification).toBe("not_performed");
+  });
+
+  it("blocks password sign-in launch when public signup is enabled or the email provider is disabled", async () => {
+    const signupEnabled = await buildLaunchPreflightReport(
+      { help: false },
+      localEnvironment(),
+      readyAdapters({
+        readAuthSettings: vi.fn(async () => ({
+          data: { disable_signup: false, external: { email: true } },
+        })),
+      }),
+      { expectedMigrations },
+    );
+    const emailProviderDisabled = await buildLaunchPreflightReport(
+      { help: false },
+      localEnvironment(),
+      readyAdapters({
+        readAuthSettings: vi.fn(async () => ({
+          data: { disable_signup: true, external: { email: false } },
+        })),
+      }),
+      { expectedMigrations },
+    );
+
+    expect(signupEnabled.blockers.map(({ code }) => code)).toContain("auth_signup_enabled");
+    expect(emailProviderDisabled.blockers.map(({ code }) => code)).toContain("auth_email_password_disabled");
   });
 });

@@ -1,114 +1,142 @@
 # Administrator authentication
 
-Outlist administrator access is invite-only and uses Supabase email one-time
-passwords (OTP). The application does not expose account registration,
-password sign-in, social sign-in, or password reset. New accounts and changes to
-the administrator allowlist are trusted administrative operations.
+Outlist administrator access is invite-only and uses Supabase email-and-password
+authentication. Public signup, registration, passwordless login, and public
+password-reset flows are not part of the application. A trusted operator
+provisions Auth users and the separate administrator UUID allowlist.
 
-## Authentication lifecycle
+## Authentication and authorization
 
-1. An administrator enters an email address at `/admin/login`.
-2. A Next.js Server Action calls `signInWithOtp` with `shouldCreateUser: false`.
-   The response is the same whether Auth accepts or rejects the address, so the
-   page does not reveal account existence.
-3. The administrator enters the emailed code. The Server Action validates the
-   email and code with Zod, then calls `verifyOtp` with `type: "email"`.
-4. Supabase SSR stores the resulting session in HTTP-only cookies. The Next.js
-   16 `src/proxy.ts` refreshes sessions with `auth.getClaims()` only on `/admin` and
-   `/admin/*`, forwarding updated request and response cookies.
-5. The server admin layout and `/admin` page independently call
-   `getAdminIdentity()` / `requireAdmin()`. These verify claims with
-   `getClaims()`, take the UUID from the verified `sub`, and query
-   `public.admin_users` through the server-only Supabase secret client.
-   A matching UUID row is required on each protected request. Email, user
-   metadata, and client-side state do not grant access.
-6. The visible Sign out form submits a Server Action with POST. It calls
-   Supabase `signOut()`, clears Supabase Auth cookies, and redirects to
-   `/admin/login`.
+1. `/admin/login` accepts an email address and password. It has no OTP or Magic
+   Link interface.
+2. A Next.js Server Action validates the input and calls
+   `supabase.auth.signInWithPassword({ email, password })` through the existing
+   Supabase SSR client. Credentials are not stored in application tables,
+   localStorage, or logs.
+3. Supabase SSR writes the session to HTTP-only cookies, marked `secure` in
+   production. The scoped Next.js 16 `src/proxy.ts` refreshes an expiring
+   session with `auth.getClaims()` and forwards updated cookies. Proxy refreshes
+   sessions; it does not grant administrator access.
+4. After sign-in, the server verifies the cookie-backed identity with
+   `auth.getClaims()`, takes the verified UUID from `sub`, and checks for that
+   exact UUID in `public.admin_users` with the server-only privileged client.
+   A missing or unverifiable row clears the new session and returns the same
+   generic credentials error. Email, user metadata, and browser state never
+   grant access.
+5. The admin layout, dashboard, project routes, and every protected Server
+   Action independently call `getAdminIdentity()` or `requireAdmin()`. Each
+   check performs a fresh allowlist lookup. Editorial database functions also
+   require the service role and recheck current allowlist membership.
+6. Sign out calls Supabase Auth from a Server Action, clears Auth cookies, and
+   redirects to `/admin/login`.
 
-The Proxy refreshes cookies; it is not the authorization boundary. Every page
-under `src/app/admin/` is guarded by the dynamic server layout, and protected
-Server Actions or Route Handlers must call `requireAdmin()` themselves before
-performing work. The login route is explicitly exempted from the layout gate by
-an internal request header that Proxy derives from the request path and
-overwrites on every matching request. Protected pages send
-`Cache-Control: private, no-store` and are dynamically rendered.
+The login route is the only route exempted from the dynamic admin layout. Proxy
+overwrites the internal route header from the request path. Admin pages use
+dynamic rendering and `Cache-Control: private, no-store`. The existing RLS,
+grants, allowlist table, and database publication safeguards are unchanged.
 
-Every module that reads `SUPABASE_SECRET_KEY` is server-only. Only the
-privileged client sends the key to Supabase, and it uses it only for the exact
-allowlist lookup. The key is never sent to the browser.
-`public.admin_users` remains private under its existing RLS and grants;
-ordinary `anon` and `authenticated` roles cannot read or change it.
+Modules that read `SUPABASE_SECRET_KEY` are server-only. The secret key is used
+for the allowlist lookup and other existing server-only operations; it is
+never sent to the browser. Passwords, session tokens, and secret keys must not
+be printed in logs or committed files.
 
-## Start local Supabase
+## Supabase configuration
 
-Local Auth and email delivery require a Docker-compatible runtime. From the
-repository root:
+In local `supabase/config.toml`, public signup is disabled. The Supabase email
+provider must remain enabled for email/password sign-in. On the hosted project,
+verify these settings in **Authentication → Sign In / Providers** before
+launch:
 
-```bash
-bun install --frozen-lockfile
-bun run supabase start
-bun run supabase status
-```
+- Enable the Email provider for password authentication.
+- Disable **Allow new users to sign up**. Do not use public signup to provision
+  an administrator.
+- Keep email confirmation enabled. Only a trusted operator should mark an
+  account confirmed after verifying that the intended administrator controls
+  the email address through an established, trusted channel.
 
-Copy `.env.example` to `.env.local` and use the local API URL, publishable key,
-and secret key printed by `supabase status`:
+Password login does not use an email template, SMTP delivery, Site URL, or
+redirect callback. The application does not implement OTP, Magic Link,
+registration, or password-reset routes.
 
-```bash
+For local development, copy `.env.example` to `.env.local`, then set the local
+values shown by `supabase status`:
+
+```dotenv
 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<local publishable key>
 SUPABASE_SECRET_KEY=<local secret key>
 ```
 
-The local project config disables public account creation and points the
-Supabase Auth Magic Link template at
-`supabase/templates/admin-otp.html`. That template includes `{{ .Token }}` so
-`signInWithOtp` sends a code that can be entered in the app. After changing the
-template configuration, restart the local stack:
+Never put the secret key in a `NEXT_PUBLIC_` variable. Local Auth test users in
+the disposable browser suite receive random per-run passwords; those tests do
+not use Mailpit.
 
-```bash
-bun run supabase stop
-bun run supabase start
-bun run dev
-```
+## Provision a trusted administrator
 
-The local Supabase CLI captures Auth emails in Mailpit. Open the Inbucket URL
-shown by `bun run supabase status` (normally `http://127.0.0.1:54324`) to read
-test OTP messages. Local delivery does not send real email.
+Provisioning requires both a Supabase Auth user and a row containing its exact
+Auth UUID in `public.admin_users`. Do not use a public signup form, a migration,
+or an app-side registration action.
 
-## Provision the first administrator
+1. Verify the person's identity and that they control the exact email address
+   through a trusted process before marking the Auth email as confirmed. Do
+   not treat a supplied email address by itself as proof of ownership.
+2. In the intended project's Supabase Dashboard, open **Authentication →
+   Users** and create the user with the verified email and a unique, strong
+   password. Keep the email unconfirmed until step 1 is complete. Alternatively,
+   use the Auth Admin API from a trusted server environment:
 
-Provisioning has two separate, trusted steps. Never use the public login form,
-a signup endpoint, browser code, or a migration to create an administrator.
+   ```ts
+   const { data, error } = await supabase.auth.admin.createUser({
+     email: verifiedEmail,
+     password: strongUniquePassword,
+     email_confirm: true, // only after the email owner has been verified
+   });
+   ```
 
-1. In local Supabase Studio (the URL printed by `bun run supabase status`), use
-   the Auth Users administrative UI to create the user with the intended email
-   and a confirmed email address. In a trusted server-side administrative
-   workflow, the equivalent Supabase Auth Admin API call is
-   `auth.admin.createUser({ email, email_confirm: true })`. Use the secret key
-   only in that trusted workflow, never in a browser or committed script.
-2. Copy the returned Auth user UUID. It is the Auth `id`, not the email and not
-   a UUID invented by the operator.
-3. In the local Studio SQL Editor, run the following as the database owner,
-   replacing the placeholder with that exact Auth UUID:
+   The Auth Admin API and secret key must remain server-side. Do not log or
+   persist the password. The operator must not set `email_confirm: true` for an
+   unverified identity.
+3. Copy the returned Auth `id`. In the Dashboard SQL Editor or another trusted
+   database administration workflow, add that exact UUID:
 
    ```sql
    insert into public.admin_users (user_id)
-   values ('<auth-user-uuid>');
+   values ('<verified-auth-user-uuid>');
    ```
 
-   The table has a foreign key to `auth.users`; a nonexistent UUID will fail.
-4. Start Outlist, open `/admin/login`, enter the provisioned email, and use the
-   code in Mailpit. The admin page checks the UUID allowlist entry again on
-   every request.
+   The foreign key rejects UUIDs that do not belong to an Auth user. Never
+   insert email addresses or invented UUIDs into the allowlist.
+4. Give the administrator their initial password through a separate secure
+   channel, then verify that the account can sign in and reaches `/admin`.
+   Keep `public.admin_users` private; do not add allowlist data to migrations
+   or application seed data.
 
-Do not add administrator identities to migration or seed SQL. Do not enable
-public signup to simplify provisioning.
+## Reset an administrator password
 
-## Remove or replace access
+There is no public reset endpoint or email-based recovery flow in this MVP. A
+trusted operator can reset an administrator password after verifying the
+person's identity through the established administrative process:
 
-To revoke access, delete the matching row using the Studio SQL Editor or another
-privileged database administration workflow:
+1. Generate a unique strong password in an approved password manager.
+2. In **Authentication → Users**, set the password for the exact Auth user, or
+   call the Auth Admin API from a trusted server-only environment:
+
+   ```ts
+   const { error } = await supabase.auth.admin.updateUserById(
+     verifiedAuthUserUuid,
+     { password: newStrongPassword },
+   );
+   ```
+
+3. Deliver the temporary password through a separate secure channel. Never
+   place it in SQL, app tables, source control, logs, or a browser. For a
+   suspected compromise, also revoke the user's existing Auth sessions using
+   the trusted Auth administration workflow.
+
+## Revoke or replace access
+
+To revoke administrator authorization, delete the matching row through the
+Dashboard SQL Editor or another privileged database workflow:
 
 ```sql
 delete from public.admin_users
@@ -116,101 +144,35 @@ where user_id = '<auth-user-uuid>';
 ```
 
 The next protected request performs a fresh lookup and denies access even if
-the Auth session remains valid. This does not delete the Auth user. For a
-compromised account, also revoke its sessions or ban/delete it using the Auth
-administrative workflow. To replace an administrator, create and verify the
-replacement Auth user, add the replacement UUID, verify access, then revoke the
-old UUID and invalidate the old account's sessions. Rotate the Supabase secret
-key if it may have been exposed, and update the server environment.
+the Auth session remains valid. This does not delete the Auth user. To replace
+an administrator, verify and provision the replacement account, add its UUID,
+verify access, then revoke the old UUID and invalidate its Auth sessions. If a
+secret key may have been exposed, rotate it in Supabase and update the server
+environment.
 
-## Hosted Supabase setup
+## Verification
 
-For each hosted project:
+Vitest mocks Supabase Auth and PostgREST. The focused unit coverage checks
+password sign-in, invalid credentials, missing and malformed input, non-
+allowlisted denial, logout, fresh allowlist checks, and server-action
+authorization. pgTAP continues to verify ordinary roles cannot read or change
+`admin_users`.
 
-1. Apply the committed database migrations through the approved deployment
-   process.
-2. Disable **Allow new users to sign up** in Authentication settings. Also
-   confirm no alternate public Auth flow is enabled for account creation.
-3. Configure the Auth **Magic Link** email template to contain `{{ .Token }}`
-   (and not only `{{ .ConfirmationURL }}`); the OTP must match the email
-   template used by this app.
-4. Set the Site URL to the deployed app origin and review the allowed redirect
-   URL list. The OTP form flow does not need an email-link callback.
-5. Configure a production SMTP provider, sender identity, SPF/DKIM/DMARC, and
-   delivery monitoring. Supabase's built-in SMTP is intended for testing and
-   restricts delivery to authorized team addresses.
-6. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and
-   `SUPABASE_SECRET_KEY` in the server deployment environment. Keep the secret
-   key out of all `NEXT_PUBLIC_` variables, client code, logs, and source
-   control.
-7. Create the administrator through the hosted Supabase Auth administrative
-   UI or a trusted Auth Admin API workflow, obtain the Auth UUID, and insert
-   that UUID into `public.admin_users` through the SQL Editor or another
-   privileged database operation.
-
-Use production Auth rate limits for sign-in requests and token verification,
-keep OTP expiry short, monitor SMTP abuse and delivery, and consider CAPTCHA or
-additional request throttling if the admin login is exposed to the public
-internet. Disable email click tracking for authentication messages. Do not
-raise Auth rate limits to work around a delivery problem.
-
-Supabase Auth reports a rejected OTP as `otp_expired` with the shared message
-“Token has expired or is invalid,” so the interface shows a combined
-invalid-or-expired state and lets the user request a fresh code.
-
-## Scope and verification limits
-
-The admin dashboard is backed by the Supabase editorial queue. Authorized
-administrators review actual drafts and source evidence, make explicit
-license and quality decisions, and publish individual projects through
-service-role-only transactions. Public alternatives and public submissions
-remain unavailable. The JSON catalog is retained for tests and validation; it
-is not used by public routes.
-
-Unit tests mock Supabase Auth and PostgREST calls. pgTAP checks ordinary-role
-access to `admin_users`. The `auth-e2e` CI job additionally starts a disposable
-local Supabase stack, applies the committed migrations, provisions temporary
-confirmed users through the Auth Admin API, inserts their real UUIDs into the
-allowlist, starts the production Next.js server, reads actual OTPs from
-Mailpit, and exercises the browser login, authorization, revocation, and logout
-flows with Chromium. It also checks anonymous and forged-header requests,
-unknown-email behavior, incorrect and expired OTPs, public-directory
-availability, SSR cookie attributes, and protected response cache headers.
-
-To run the same integration suite locally, install Chromium once and run:
-
-```bash
-bunx playwright install chromium
-bun run test:auth-e2e
-```
-
-This command requires a Docker-compatible runtime and a stopped local Supabase
-stack. It starts Supabase, resets the local database from migrations, uses
-temporary `.example.com` identities, then removes their Auth users, allowlist
-rows, and Mailpit messages and stops the stack with its volumes removed. It
-does not use hosted credentials. The runner suppresses Supabase CLI output so
-local keys and OTPs are not written to logs; browser traces, screenshots, and
-videos are disabled.
-
-This verifies the local Supabase Auth and PostgreSQL integration, local Mailpit
-delivery, and the production Next.js browser flow. It does not verify hosted
-Supabase project settings, administrator provisioning in a hosted project, or
-delivery through a hosted SMTP provider. Mailpit success is not evidence of
-production email deliverability. Complete the hosted allowlist, Site URL,
-redirect URL, OTP template, and SMTP steps in [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md)
-before beginning editorial review. No hosted administrator has been provisioned
-for M1-10.
+The separate `auth-e2e` CI job provisions disposable local Auth users with
+random passwords, inserts selected UUIDs into the local allowlist, starts a
+production Next.js server, and exercises password sign-in, generic failures,
+protected routes, session cookies, allowlist revocation, editorial actions,
+and logout in Chromium. It requires Docker and resets only its disposable
+local Supabase stack; it does not use hosted credentials. Do not run that job
+when Docker or local PostgreSQL use is disallowed.
 
 ## References
 
+- [Supabase password-based Auth](https://supabase.com/docs/guides/auth/passwords)
+- [Supabase Auth Admin `createUser`](https://supabase.com/docs/reference/javascript/auth-admin-createuser)
+- [Supabase Auth Admin `updateUserById`](https://supabase.com/docs/reference/javascript/auth-admin-updateuserbyid)
+- [Supabase Auth general configuration](https://supabase.com/docs/guides/auth/general-configuration)
 - [Supabase SSR authentication](https://supabase.com/docs/guides/auth/server-side)
-- [Supabase Next.js SSR client](https://supabase.com/docs/guides/auth/server-side/creating-a-client?framework=nextjs)
-- [Supabase `signInWithOtp`](https://supabase.com/docs/reference/javascript/auth-signinwithotp)
-- [Supabase `verifyOtp`](https://supabase.com/docs/reference/javascript/auth-verifyotp)
-- [Supabase email templates](https://supabase.com/docs/guides/auth/auth-email-templates)
-- [Local email templates and Mailpit](https://supabase.com/docs/guides/local-development/customizing-email-templates)
-- [Supabase SMTP setup](https://supabase.com/docs/guides/auth/auth-smtp)
 - [Next.js Proxy](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)
 - [Next.js Server Actions](https://nextjs.org/docs/app/getting-started/mutating-data)
-- [Playwright authentication and browser contexts](https://playwright.dev/docs/auth)
-- [Mailpit API](https://mailpit.axllent.org/docs/api-v1/)
+- [Playwright authentication](https://playwright.dev/docs/auth)

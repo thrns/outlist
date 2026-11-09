@@ -7,13 +7,12 @@ export const adminEmailSchema = z
   .max(254, "Email address is too long.")
   .transform((email) => email.toLowerCase());
 
-export const adminOtpSchema = z
+export const adminPasswordSchema = z
   .string()
-  .trim()
-  .regex(/^\d{6,8}$/, "Enter the one-time code from your email.");
+  .min(1, "Enter your password.")
+  .max(1024, "Password is too long.");
 
-export const adminOtpRequestSchema = z.object({ email: adminEmailSchema });
-export const adminOtpVerificationSchema = z.object({
+export const adminPasswordSignInSchema = z.object({
   email: adminEmailSchema,
-  token: adminOtpSchema,
+  password: adminPasswordSchema,
 });

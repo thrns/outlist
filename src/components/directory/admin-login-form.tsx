@@ -3,61 +3,44 @@
 import { useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { adminPasswordSignInSchema } from "@/lib/auth/schemas";
 import {
-  adminEmailSchema,
-  adminOtpSchema,
-} from "@/lib/auth/schemas";
-import {
-  requestAdminOtp,
-  verifyAdminOtp,
+  signInAdmin,
   type AdminAuthActionResult,
 } from "@/app/admin/login/actions";
 
-type Step = "email" | "code";
-
 export function AdminLoginForm() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>("email");
-  const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
   const [feedback, setFeedback] = useState<AdminAuthActionResult | null>(null);
   const [emailError, setEmailError] = useState("");
-  const [tokenError, setTokenError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [pending, startTransition] = useTransition();
 
-  function submitEmail(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const parsed = adminEmailSchema.safeParse(email);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const parsed = adminPasswordSignInSchema.safeParse({
+      email: formData.get("email"),
+      password: formData.get("password"),
+    });
+
     if (!parsed.success) {
-      setEmailError(parsed.error.issues[0]?.message ?? "Enter a valid email address.");
+      const issues = parsed.error.flatten().fieldErrors;
+      setEmailError(issues.email?.[0] ?? "");
+      setPasswordError(issues.password?.[0] ?? "");
       setFeedback(null);
       return;
     }
 
     setEmailError("");
+    setPasswordError("");
     setFeedback(null);
     startTransition(async () => {
-      const result = await requestAdminOtp({ email: parsed.data });
-      setFeedback(result);
-      if (result.status === "requested") setStep("code");
-    });
-  }
-
-  function submitCode(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = adminOtpSchema.safeParse(token);
-    if (!parsed.success) {
-      setTokenError(parsed.error.issues[0]?.message ?? "Enter the one-time code.");
-      setFeedback(null);
-      return;
-    }
-
-    setTokenError("");
-    setFeedback(null);
-    startTransition(async () => {
-      const result = await verifyAdminOtp({ email, token: parsed.data });
+      const result = await signInAdmin(parsed.data);
       setFeedback(result);
       if (result.status === "authenticated") {
+        form.reset();
         router.replace("/admin");
         router.refresh();
       }
@@ -76,123 +59,82 @@ export function AdminLoginForm() {
           <div className="eyebrow muted">Invite-only access</div>
           <h1 className="page-title">Administrator sign in</h1>
           <p className="muted" style={{ lineHeight: 1.7, marginTop: 0 }}>
-            Use the email address provisioned for Outlist administration. We’ll
-            send a one-time code if the account is eligible.
+            Sign in with the email address and password provisioned for Outlist
+            administration.
           </p>
 
-          {step === "email" ? (
-            <form onSubmit={submitEmail} noValidate>
-              <div className="form-field">
-                <label className="field-label" htmlFor="admin-email">
-                  Email address
-                </label>
-                <input
-                  autoComplete="email"
-                  className="input"
-                  id="admin-email"
-                  inputMode="email"
-                  maxLength={254}
-                  name="email"
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  type="email"
-                  value={email}
-                  aria-invalid={Boolean(emailError)}
-                  aria-describedby={emailError ? "admin-email-error" : undefined}
-                />
-                {emailError && (
-                  <p className="error" id="admin-email-error" role="alert">
-                    {emailError}
-                  </p>
-                )}
-              </div>
-              <Button disabled={pending} type="submit">
-                {pending ? "Sending request…" : "Send one-time code"}
-              </Button>
-            </form>
-          ) : (
-            <form onSubmit={submitCode} noValidate>
-              {feedback?.status === "requested" && (
-                <p className="alert-inline" role="status">
-                  {feedback.message}
+          <form onSubmit={submit} noValidate>
+            <div className="form-field">
+              <label className="field-label" htmlFor="admin-email">
+                Email address
+              </label>
+              <input
+                autoComplete="username"
+                className="input"
+                id="admin-email"
+                inputMode="email"
+                maxLength={254}
+                name="email"
+                onChange={() => {
+                  setEmailError("");
+                  setFeedback(null);
+                }}
+                required
+                type="email"
+                aria-invalid={Boolean(emailError)}
+                aria-describedby={emailError ? "admin-email-error" : undefined}
+              />
+              {emailError && (
+                <p className="error" id="admin-email-error" role="alert">
+                  {emailError}
                 </p>
               )}
-              <div className="form-field">
-                <label className="field-label" htmlFor="admin-code">
-                  One-time code
-                </label>
-                <input
-                  autoComplete="one-time-code"
-                  autoFocus
-                  className="input"
-                  id="admin-code"
-                  inputMode="numeric"
-                  maxLength={8}
-                  name="token"
-                  onChange={(event) => {
-                    setToken(event.target.value.replace(/\D/g, "").slice(0, 8));
-                    setTokenError("");
-                    setFeedback(null);
-                  }}
-                  pattern="[0-9]{6,8}"
-                  required
-                  type="text"
-                  value={token}
-                  aria-invalid={Boolean(tokenError || feedback?.status === "invalid" || feedback?.status === "invalid_or_expired")}
-                  aria-describedby={
-                    tokenError || feedback?.status === "invalid" || feedback?.status === "invalid_or_expired"
-                      ? "admin-code-error"
-                      : undefined
-                  }
-                />
-                {(tokenError || feedback?.status === "invalid" || feedback?.status === "invalid_or_expired") && (
-                  <p className="error" id="admin-code-error" role="alert">
-                    {tokenError || feedback?.message}
-                  </p>
-                )}
-              </div>
-              {feedback &&
-                ["configuration_error", "service_error", "not_authorized"].includes(
-                  feedback.status,
-                ) && (
-                  <p className="alert-inline" role="alert">
-                    {feedback.message}
-                  </p>
-                )}
-              <div className="form-actions">
-                <Button disabled={pending} type="submit">
-                  {pending ? "Verifying…" : "Verify code"}
-                </Button>
-                <Button
-                  disabled={pending}
-                  onClick={() => {
-                    setToken("");
-                    setFeedback(null);
-                    setStep("email");
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  Use another email
-                </Button>
-              </div>
-            </form>
-          )}
+            </div>
 
-          {step === "email" &&
-            ["configuration_error", "service_error"].includes(feedback?.status ?? "") && (
-            <p className="alert-inline" role="alert" style={{ marginTop: 18 }}>
-              {feedback?.message}
-            </p>
-          )}
+            <div className="form-field">
+              <label className="field-label" htmlFor="admin-password">
+                Password
+              </label>
+              <input
+                autoComplete="current-password"
+                className="input"
+                id="admin-password"
+                maxLength={1024}
+                name="password"
+                onChange={() => {
+                  setPasswordError("");
+                  setFeedback(null);
+                }}
+                required
+                type="password"
+                aria-invalid={Boolean(passwordError)}
+                aria-describedby={passwordError ? "admin-password-error" : undefined}
+              />
+              {passwordError && (
+                <p className="error" id="admin-password-error" role="alert">
+                  {passwordError}
+                </p>
+              )}
+            </div>
+
+            {feedback && feedback.status !== "authenticated" && (
+              <p className="error" role="alert">
+                {feedback.message}
+              </p>
+            )}
+
+            <Button disabled={pending} type="submit">
+              {pending ? "Signing in…" : "Sign In"}
+            </Button>
+          </form>
         </section>
 
         <aside className="guide-box">
           <h2>Administrator access</h2>
           <ol>
-            <li>Only accounts provisioned by a site administrator can sign in.</li>
-            <li>Use the one-time code from your email before it expires.</li>
-            <li>Contact the site administrator if you need access.</li>
+            <li>Only trusted accounts provisioned by a site administrator can sign in.</li>
+            <li>Access is granted only to Auth user UUIDs on the administrator allowlist.</li>
+            <li>Contact the site administrator if you need access or a password reset.</li>
           </ol>
         </aside>
       </div>

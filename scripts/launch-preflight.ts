@@ -75,9 +75,7 @@ export type LaunchPreflightReport = {
     status: "ready" | "incomplete" | "unavailable" | "not_checked";
     allowlisted_admin_count: number | null;
     signups_disabled: boolean | null;
-    otp_email_enabled: boolean | null;
-    hosted_redirect_urls: "manual_verification_required" | "not_applicable";
-    hosted_otp_delivery: "manual_verification_required" | "not_applicable";
+    email_password_enabled: boolean | null;
   };
   pipeline: {
     status: "ready" | "blocked" | "unavailable" | "not_checked";
@@ -240,8 +238,6 @@ export async function buildLaunchPreflightReport(
   requiredEnvironment.OUTLIST_SUPABASE_ENVIRONMENT = { configured: Boolean(environment.OUTLIST_SUPABASE_ENVIRONMENT?.trim()), required: true };
   requiredEnvironment.GITHUB_TOKEN = { configured: Boolean(environment.GITHUB_TOKEN?.trim()), required: false };
   requiredEnvironment.OUTLIST_PUBLIC_ORIGIN = { configured: Boolean(environment.OUTLIST_PUBLIC_ORIGIN?.trim()), required: false };
-  requiredEnvironment.OUTLIST_AUTH_REDIRECTS_VERIFIED = { configured: environment.OUTLIST_AUTH_REDIRECTS_VERIFIED === "true", required: false };
-  requiredEnvironment.OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED = { configured: environment.OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED === "true", required: false };
 
   const targetInfo = classifyLaunchTarget(environment.NEXT_PUBLIC_SUPABASE_URL, environment.OUTLIST_SUPABASE_ENVIRONMENT);
   const target: LaunchPreflightReport["target"] = {
@@ -290,9 +286,7 @@ export async function buildLaunchPreflightReport(
     categories: { status: "not_checked", active_count: null, missing: [...EXPECTED_CATEGORIES] },
     storage: { status: "not_checked", bucket: "project-logos", public: null, file_size_limit: null, mime_types: [] },
     public_catalog: { status: "not_checked", search_ready: null, rls_read_ready: null, public_item_count: null, active_category_count: null },
-    admin_authorization: { status: "not_checked", allowlisted_admin_count: null, signups_disabled: null, otp_email_enabled: null,
-      hosted_redirect_urls: targetInfo.kind === "hosted" ? "manual_verification_required" : "not_applicable",
-      hosted_otp_delivery: targetInfo.kind === "hosted" ? "manual_verification_required" : "not_applicable" },
+    admin_authorization: { status: "not_checked", allowlisted_admin_count: null, signups_disabled: null, email_password_enabled: null },
     pipeline: { status: "not_checked", schema_ready: null, running_jobs: null, active_leases: null, inventory: null },
     integrity: { status: "not_checked", findings: [] },
     github_rate_limit: { status: environment.GITHUB_TOKEN?.trim() ? "not_checked" : "not_configured", authentication: environment.GITHUB_TOKEN?.trim() ? "unknown" : "unauthenticated",
@@ -401,18 +395,21 @@ export async function buildLaunchPreflightReport(
   const authSettings = object(authResult.data);
   const signupsDisabled = authSettings?.disable_signup === true;
   const emailProvider = object(authSettings?.external);
-  const otpEmailEnabled = emailProvider?.email === true || authSettings?.email_enabled === true;
-  const otpEmailVerified = authSettings !== null && (emailProvider?.email === true || authSettings.email_enabled === true || emailProvider?.email === false);
+  const emailPasswordEnabled = typeof emailProvider?.email === "boolean"
+    ? emailProvider.email
+    : typeof authSettings?.email_enabled === "boolean"
+      ? authSettings.email_enabled
+      : null;
   report.admin_authorization.signups_disabled = authResult.error ? null : signupsDisabled;
-  report.admin_authorization.otp_email_enabled = authResult.error || !otpEmailVerified ? null : otpEmailEnabled;
-  if (authResult.error || !authSettings) blockers.push({ code: "auth_settings_unavailable", message: "Supabase Auth settings could not be read; verify that invite-only OTP authentication is available." });
-  else if (!signupsDisabled) blockers.push({ code: "auth_signup_enabled", message: "Disable public account signup before enabling administrator OTP access." });
-  else if (!otpEmailVerified) blockers.push({ code: "auth_email_otp_unverified", message: "The Auth settings response did not confirm that the email provider is enabled." });
-  else if (!otpEmailEnabled) blockers.push({ code: "auth_email_otp_disabled", message: "The Supabase email provider is disabled; administrator OTP sign-in cannot work." });
+  report.admin_authorization.email_password_enabled = authResult.error ? null : emailPasswordEnabled;
+  if (authResult.error || !authSettings) blockers.push({ code: "auth_settings_unavailable", message: "Supabase Auth settings could not be read; verify that email/password authentication is available and public signup is disabled." });
+  else if (!signupsDisabled) blockers.push({ code: "auth_signup_enabled", message: "Disable public account signup before enabling administrator password sign-in." });
+  else if (emailPasswordEnabled === null) blockers.push({ code: "auth_email_password_unverified", message: "The Auth settings response did not confirm that the email provider is enabled." });
+  else if (!emailPasswordEnabled) blockers.push({ code: "auth_email_password_disabled", message: "The Supabase email provider is disabled; administrator password sign-in cannot work." });
   if (adminResult.error || adminCount === null) blockers.push({ code: "admin_allowlist_unavailable", message: "The private administrator allowlist could not be checked with the server credential." });
   else if (adminCount < 1) blockers.push({ code: "admin_allowlist_empty", message: "Provision at least one trusted Auth user UUID in public.admin_users before editorial review." });
   report.admin_authorization.status = authResult.error || adminResult.error || adminCount === null ? "unavailable"
-    : signupsDisabled && otpEmailEnabled && adminCount > 0 ? "ready" : "incomplete";
+    : signupsDisabled && emailPasswordEnabled && adminCount > 0 ? "ready" : "incomplete";
 
   const searchData = object(searchResult.data);
   const searchCount = safeCount(searchData?.totalCount);
@@ -472,11 +469,9 @@ export async function buildLaunchPreflightReport(
   if (targetInfo.kind === "hosted") {
     const manualChecks: Array<[string, boolean]> = [
       ["OUTLIST_PUBLIC_ORIGIN must be the deployed HTTPS origin", isHttpsOrigin(environment.OUTLIST_PUBLIC_ORIGIN)],
-      ["OUTLIST_AUTH_REDIRECTS_VERIFIED must attest that Supabase Site URL and allowed redirects match the deployed origin", environment.OUTLIST_AUTH_REDIRECTS_VERIFIED === "true"],
-      ["OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED must attest a real administrator OTP email delivery check", environment.OUTLIST_AUTH_EMAIL_DELIVERY_VERIFIED === "true"],
     ];
     report.manual_checks_required = manualChecks.filter(([, completed]) => !completed).map(([description]) => description);
-    if (report.manual_checks_required.length) blockers.push({ code: "hosted_manual_checks_incomplete", message: "Complete the hosted HTTPS, Auth redirect, and production OTP delivery checks; the Supabase API does not expose these settings for independent verification." });
+    if (report.manual_checks_required.length) blockers.push({ code: "hosted_manual_checks_incomplete", message: "Set and verify the deployed HTTPS origin before beginning the hosted pilot." });
     report.hosted_verification = "partial";
   } else if (targetInfo.kind === "local") {
     report.hosted_verification = "not_performed";

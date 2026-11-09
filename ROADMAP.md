@@ -33,7 +33,7 @@ platform capabilities.
   tools, public database queries, search RPC, and UI integration remain later
   work.
 
-## M0-03 — Secure administrator authentication
+## M0-03 — Original OTP administrator authentication (superseded by M2-01)
 
 - Add invite-only Supabase email OTP login with account creation disabled.
 - Refresh SSR sessions with a scoped Next.js 16 Proxy using verified claims.
@@ -46,6 +46,10 @@ platform capabilities.
   compatibility in an isolated Chromium CI job.
 - Keep moderation, publishing, and ingestion controls as clearly labeled
   browser-local demonstrations.
+
+The original OTP login flow was replaced by M2-01. Current administrator
+sign-in uses email and password; the local OTP email template and login flow
+are no longer part of the application.
 
 ### Historical limitations after M0-03 (superseded by M1-07)
 
@@ -365,7 +369,7 @@ platform capabilities.
 
 - Added a read-only `bun run launch:preflight` report for target classification,
   required configuration, applied migration versions, category taxonomy,
-  Storage, anonymous public search/RLS, administrator OTP/allowlist setup,
+  Storage, anonymous public search/RLS, administrator password/allowlist setup,
   pipeline operations, integrity findings, inventory, and optional GitHub
   rate-limit data. It redacts credential values and never starts ingestion or
   writes database or Storage records.
@@ -386,12 +390,26 @@ platform capabilities.
 
 ### Remaining limitations after M1-10
 
-- Hosted Supabase configuration, SMTP delivery, migration application, public
+- Hosted Supabase Auth configuration, migration application, public
   catalog contents, production latency, and website deployment remain
   unverified. A separate authorization is required for each hosted operation.
 - The application has no general administrator unpublish action. The existing
   system-origin demotion handles validated primary-source restrictions; other
   publication corrections require an independently reviewed forward fix.
+
+## M2-01 — Administrator email and password authentication (implemented)
+
+- Replaced the email OTP form and actions with server-action password sign-in
+  through Supabase SSR. Removed OTP-specific validation, tests, template, and
+  local Auth template configuration.
+- Kept session refresh, HTTP-only cookie handling, the server-verified Auth
+  UUID check, fresh privileged allowlist lookups, protected editorial actions,
+  sign out, RLS, and publication safeguards.
+- Added trusted Auth user provisioning and administrator password reset
+  instructions without public signup or a public password-reset endpoint.
+- Updated password-auth integration coverage and launch preflight checks for
+  the email provider and disabled public signup. No hosted settings, Auth
+  users, database records, or migrations were changed.
 
 ## Later milestones
 

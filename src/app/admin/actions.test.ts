@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   createSupabaseServerClient: vi.fn(),
   requireAdmin: vi.fn(),
+  createSupabaseAdminClient: vi.fn(),
   signOut: vi.fn(),
   cookies: vi.fn(),
   redirect: vi.fn(),
@@ -11,6 +12,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServerClient: mocks.createSupabaseServerClient,
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createSupabaseAdminClient: mocks.createSupabaseAdminClient,
 }));
 vi.mock("next/headers", () => ({ cookies: mocks.cookies }));
 vi.mock("@/lib/auth/admin", () => ({
@@ -26,6 +30,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { logoutAdmin } from "./actions";
+import { saveProjectEditorial } from "./actions";
+import { AdminAccessDeniedError } from "@/lib/auth/admin";
 
 describe("administrator logout", () => {
   beforeEach(() => {
@@ -76,5 +82,15 @@ describe("administrator logout", () => {
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(mocks.requireAdmin).toHaveBeenCalledOnce();
     expect(mocks.cookieSet).toHaveBeenCalledOnce();
+  });
+
+  it("checks the allowlist before a protected editorial server action can write", async () => {
+    mocks.requireAdmin.mockRejectedValueOnce(new AdminAccessDeniedError());
+
+    await expect(saveProjectEditorial(new FormData())).rejects.toThrow("redirected");
+
+    expect(mocks.requireAdmin).toHaveBeenCalledOnce();
+    expect(mocks.redirect).toHaveBeenCalledWith("/admin?access=denied");
+    expect(mocks.createSupabaseAdminClient).not.toHaveBeenCalled();
   });
 });

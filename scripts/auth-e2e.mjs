@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -35,7 +35,6 @@ const identityNames = [
   "logout",
   "nonAdmin",
   "invalid",
-  "expired",
 ];
 
 let stage = "checking local Supabase state";
@@ -111,14 +110,16 @@ async function createTemporaryUsers(identities) {
   const result = {};
   for (const name of identityNames) {
     const email = identities[name];
+    const password = randomBytes(32).toString("base64url");
     const { data, error } = await adminClient.auth.admin.createUser({
       email,
+      password,
       email_confirm: true,
     });
     if (error || !data.user) {
       throw new Error("Could not provision the disposable local Auth users");
     }
-    result[name] = { email, userId: data.user.id };
+    result[name] = { email, password, userId: data.user.id };
   }
 
   const allowlisted = identityNames.filter((name) => name !== "nonAdmin");
@@ -368,21 +369,12 @@ async function main() {
     "secret_key",
     "SERVICE_ROLE_KEY",
   );
-  const mailpitUrl = statusValue(
-    status,
-    "MAILPIT_URL",
-    "mailpit_url",
-    "INBUCKET_URL",
-  );
-  if (!apiUrl || !publishableKey || !secretKey || !mailpitUrl) {
+  if (!apiUrl || !publishableKey || !secretKey) {
     throw new Error("Supabase status is missing a required local service value");
   }
 
-  stage = "checking local Auth and Mailpit readiness";
-  await Promise.all([
-    waitForHttp(`${apiUrl}/auth/v1/health`, "Supabase Auth", 30_000),
-    waitForHttp(`${mailpitUrl}/api/v1/info`, "Mailpit", 30_000),
-  ]);
+  stage = "checking local Auth readiness";
+  await waitForHttp(`${apiUrl}/auth/v1/health`, "Supabase Auth", 30_000);
 
   stage = "creating temporary local Auth identities and allowlist records";
   const runId = randomUUID();
@@ -399,12 +391,10 @@ async function main() {
     NEXT_PUBLIC_SUPABASE_URL: apiUrl,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: publishableKey,
     SUPABASE_SECRET_KEY: secretKey,
-    AUTH_E2E_MAILPIT_URL: mailpitUrl,
     AUTH_E2E_BASE_URL: baseUrl,
     AUTH_E2E_OUTPUT_DIR: outputDir,
   };
-  sensitiveValues.push(apiUrl, publishableKey, secretKey, mailpitUrl);
-  process.env.AUTH_E2E_MAILPIT_URL = mailpitUrl;
+  sensitiveValues.push(apiUrl, publishableKey, secretKey);
   adminClient = createClient(apiUrl, secretKey, {
     auth: {
       autoRefreshToken: false,
@@ -421,7 +411,7 @@ async function main() {
   });
   const users = await createTemporaryUsers(emails);
   sensitiveValues.push(
-    ...Object.values(users).flatMap(({ email, userId }) => [email, userId]),
+    ...Object.values(users).flatMap(({ email, password, userId }) => [email, password, userId]),
   );
   appEnv.AUTH_E2E_USERS = JSON.stringify(users);
   const editorialFixture = await createEditorialFixture();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { adminEmailSchema, adminOtpSchema } from "./schemas";
+import { adminEmailSchema, adminPasswordSchema, adminPasswordSignInSchema } from "./schemas";
 
-describe("administrator login input validation", () => {
+describe("administrator password sign-in input validation", () => {
   it("normalizes a valid email address", () => {
     expect(adminEmailSchema.parse("  ADMIN@Example.COM  ")).toBe(
       "admin@example.com",
@@ -15,14 +15,29 @@ describe("administrator login input validation", () => {
     );
   });
 
-  it("accepts numeric OTP lengths supported by Auth settings", () => {
-    expect(adminOtpSchema.safeParse("123456").success).toBe(true);
-    expect(adminOtpSchema.safeParse("12345678").success).toBe(true);
+  it("requires a nonempty password and preserves its exact value", () => {
+    expect(adminPasswordSchema.parse("  strong password  ")).toBe(
+      "  strong password  ",
+    );
+    expect(adminPasswordSchema.safeParse("").success).toBe(false);
+    expect(adminPasswordSchema.safeParse("x".repeat(1025)).success).toBe(false);
   });
 
-  it("rejects short, long, and non-numeric OTP values", () => {
-    expect(adminOtpSchema.safeParse("12345").success).toBe(false);
-    expect(adminOtpSchema.safeParse("123456789").success).toBe(false);
-    expect(adminOtpSchema.safeParse("12ab56").success).toBe(false);
+  it("validates the complete email and password payload", () => {
+    expect(
+      adminPasswordSignInSchema.safeParse({
+        email: " ADMIN@example.com ",
+        password: "correct horse battery staple",
+      }),
+    ).toMatchObject({
+      success: true,
+      data: {
+        email: "admin@example.com",
+        password: "correct horse battery staple",
+      },
+    });
+    expect(adminPasswordSignInSchema.safeParse({ email: "admin@example.com" }).success).toBe(
+      false,
+    );
   });
 });

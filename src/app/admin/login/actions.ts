@@ -4,25 +4,18 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getAdminIdentity } from "@/lib/auth/admin";
 import { validateSupabaseAdminEnv } from "@/lib/env/admin";
 import { validateSupabasePublicEnv } from "@/lib/env/public";
-import {
-  adminOtpRequestSchema,
-  adminOtpVerificationSchema,
-} from "@/lib/auth/schemas";
+import { adminPasswordSignInSchema } from "@/lib/auth/schemas";
 
 export type AdminAuthActionResult = {
   status:
-    | "requested"
     | "authenticated"
-    | "invalid"
-    | "invalid_or_expired"
-    | "not_authorized"
+    | "invalid_credentials"
     | "configuration_error"
     | "service_error";
   message: string;
 };
 
-const GENERIC_REQUEST_MESSAGE =
-  "The request was processed. If this address is enabled for administrator access, follow the instructions sent to your inbox.";
+const INVALID_CREDENTIALS_MESSAGE = "Email or password is incorrect.";
 
 function hasAdminAuthConfiguration() {
   try {
@@ -48,89 +41,87 @@ function configurationError(): AdminAuthActionResult {
   };
 }
 
-export async function requestAdminOtp(
-  input: unknown,
-): Promise<AdminAuthActionResult> {
-  const parsed = adminOtpRequestSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      status: "invalid",
-      message: "Enter a valid email address.",
-    };
-  }
-  if (!hasAdminAuthConfiguration()) return configurationError();
-
-  let supabase;
-  try {
-    supabase = await createSupabaseServerClient();
-  } catch {
-    return configurationError();
-  }
-
-  try {
-    await supabase.auth.signInWithOtp({
-      email: parsed.data.email,
-      options: { shouldCreateUser: false },
-    });
-  } catch {
-    // Keep Auth service errors and account-existence outcomes indistinguishable.
-  }
-
-  return { status: "requested", message: GENERIC_REQUEST_MESSAGE };
+function serviceError(): AdminAuthActionResult {
+  return {
+    status: "service_error",
+    message: "Sign-in is temporarily unavailable. Try again shortly.",
+  };
 }
 
-export async function verifyAdminOtp(
-  input: unknown,
-): Promise<AdminAuthActionResult> {
-  const parsed = adminOtpVerificationSchema.safeParse(input);
+function isRetryableAuthFailure(error: unknown) {
+  if (error instanceof TypeError) return true;
+  if (typeof error !== "object" || error === null) return false;
+
+  if (
+    "name" in error &&
+    (error.name === "AuthRetryableFetchError" || error.name === "TypeError")
+  ) {
+    return true;
+  }
+
+  return "status" in error &&
+    typeof error.status === "number" &&
+    (error.status === 429 || error.status >= 500);
+}
+
+async function clearUnverifiedSession(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+) {
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    // Supabase SSR clears the local session cookie when signOut is available.
+  }
+}
+
+export async function signInAdmin(input: unknown): Promise<AdminAuthActionResult> {
+  const parsed = adminPasswordSignInSchema.safeParse(input);
   if (!parsed.success) {
     return {
-      status: "invalid",
-      message: "Enter the one-time code from your email.",
+      status: "invalid_credentials",
+      message: INVALID_CREDENTIALS_MESSAGE,
     };
   }
   if (!hasAdminAuthConfiguration()) return configurationError();
 
-  let supabase;
+  let supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   try {
     supabase = await createSupabaseServerClient();
   } catch {
     return configurationError();
   }
 
-  let verificationError: unknown;
   try {
-    const { error } = await supabase.auth.verifyOtp({
+    const { error } = await supabase.auth.signInWithPassword({
       email: parsed.data.email,
-      token: parsed.data.token,
-      type: "email",
+      password: parsed.data.password,
     });
-    verificationError = error;
-  } catch (error) {
-    verificationError = error;
-  }
 
-  if (verificationError) {
-    if (
-      verificationError instanceof TypeError ||
-      (typeof verificationError === "object" &&
-        verificationError !== null &&
-        "name" in verificationError &&
-        verificationError.name === "AuthRetryableFetchError")
-    ) {
-      return {
-        status: "service_error",
-        message:
-          "Administrator sign-in is temporarily unavailable. Try again shortly.",
-      };
+    if (error) {
+      return isRetryableAuthFailure(error)
+        ? serviceError()
+        : {
+            status: "invalid_credentials",
+            message: INVALID_CREDENTIALS_MESSAGE,
+          };
     }
-    return {
-      status: "invalid_or_expired",
-      message: "That code is invalid or expired. Request a new one to continue.",
-    };
+  } catch (error) {
+    return isRetryableAuthFailure(error)
+      ? serviceError()
+      : {
+          status: "invalid_credentials",
+          message: INVALID_CREDENTIALS_MESSAGE,
+        };
   }
 
-  const authorization = await getAdminIdentity();
+  let authorization;
+  try {
+    authorization = await getAdminIdentity();
+  } catch {
+    await clearUnverifiedSession(supabase);
+    return serviceError();
+  }
+
   if (authorization.status === "admin") {
     return {
       status: "authenticated",
@@ -138,24 +129,18 @@ export async function verifyAdminOtp(
     };
   }
 
-  try {
-    await supabase.auth.signOut();
-  } catch {
-    // signOut also clears the local cookie session when Auth is unreachable.
-  }
+  await clearUnverifiedSession(supabase);
 
   if (authorization.status === "unavailable") {
     return authorization.reason === "configuration"
       ? configurationError()
-      : {
-          status: "service_error",
-          message:
-            "Administrator access could not be verified. Try again shortly.",
-        };
+      : serviceError();
   }
+
+  // Keep a valid but non-allowlisted Auth account indistinguishable from bad
+  // credentials in the public login response.
   return {
-    status: "not_authorized",
-    message:
-      "Sign-in could not be completed. Check the code or contact the site administrator.",
+    status: "invalid_credentials",
+    message: INVALID_CREDENTIALS_MESSAGE,
   };
 }

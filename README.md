@@ -45,7 +45,7 @@ never fall back to sample projects.
 | `bun run typecheck` | Run the strict TypeScript check |
 | `bun run lint` | Run ESLint with the Next.js rules |
 | `bun run test` | Run Vitest tests |
-| `bun run test:auth-e2e` | Verify real local Supabase OTP authentication in production Chromium |
+| `bun run test:auth-e2e` | Verify local Supabase email/password authentication in production Chromium |
 | `bun run test:discovery-db` | Exercise the discovery queue against disposable local Supabase |
 | `bun run test:enrichment-db` | Exercise real enrichment orchestration and persisted rows against local Supabase |
 | `bun run test:assessment-db` | Exercise real assessment and draft transactions against local Supabase |
@@ -108,7 +108,7 @@ configuration, deployment, real ingestion, and publication remain unverified.
 - `/project/[slug]` — Published project details and related published projects
 - `/alternatives` — Coming soon until approved public relationships can be queried
 - `/submit` — Unavailable until persistent submission moderation is implemented
-- `/admin/login` — Invite-only administrator email OTP sign-in
+- `/admin/login` — Invite-only administrator email-and-password sign-in
 - `/admin` — Protected, paginated Supabase-backed editorial review queue
 - `/admin/projects/[id]` — Private source evidence, assessments, editorial corrections, decisions, and publishing
 
@@ -120,7 +120,7 @@ reads actual database drafts and private evidence on the server, and its
 actions write through service-role-only PostgreSQL functions after a fresh
 administrator allowlist check. Assessment creates pending-review drafts but
 never verifies a license or quality. See
-[ADMIN_AUTH.md](ADMIN_AUTH.md) for OTP setup and administrator provisioning,
+[ADMIN_AUTH.md](ADMIN_AUTH.md) for password authentication and trusted administrator provisioning,
 and [DATA_PIPELINE.md](DATA_PIPELINE.md) for editorial evidence and publication
 policy.
 
@@ -368,13 +368,13 @@ or publication has been performed.
 
 The separate `auth-e2e` CI job installs Chromium and runs
 `bun run test:auth-e2e`. The runner starts disposable local Supabase services,
-applies migrations, provisions temporary Auth users through the trusted Admin
-API, inserts their UUIDs into `public.admin_users`, runs the production Next.js
-server, reads actual OTPs from Mailpit, and tests the login and protected pages
-in Chromium. The local runner requires Docker and a stopped Supabase stack; it
+applies migrations, provisions temporary Auth users with random per-run
+passwords through the trusted Admin API, inserts selected UUIDs into
+`public.admin_users`, runs the production Next.js server, and tests password
+login, authorization, session refresh, allowlist revocation, and sign out in
+Chromium. The local runner requires Docker and a stopped Supabase stack; it
 resets the local database and stops/removes the stack afterward. It never uses
-hosted credentials. Local Mailpit verification does not test hosted SMTP
-delivery or hosted Supabase configuration.
+hosted credentials.
 
 When configuring the app to use local Supabase, copy `.env.example` to
 `.env.local` and fill it with values printed by `bun run supabase status`.
@@ -412,14 +412,14 @@ not part of CI.
 ## Architecture and plans
 
 - [Architecture](ARCHITECTURE.md) describes the current app and intended system boundaries.
-- [Administrator authentication](ADMIN_AUTH.md) documents OTP setup, session
+- [Administrator authentication](ADMIN_AUTH.md) documents password setup, session
   handling, authorization, and safe administrator provisioning.
 - [Data pipeline](DATA_PIPELINE.md) distinguishes candidates, enriched repositories, and published projects.
 - [Roadmap](ROADMAP.md) lists the milestone sequence.
 
 Public catalog routes require configured Supabase credentials and use the
-published catalog with RLS. Hosted Supabase configuration, production catalog
-contents, and SMTP delivery remain unverified. CI validates local migrations,
+published catalog with RLS. Hosted Supabase configuration, production Auth
+settings, and catalog contents remain unverified. CI validates local migrations,
 search and editorial integration, database grants and RLS, generated type
 parity, and isolated Chromium flows without hosted credentials.
 

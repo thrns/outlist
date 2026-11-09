@@ -14,9 +14,9 @@ privileged server clients, Zod configuration validation, versioned SQL
 migrations, a normalized PostgreSQL catalog, database policies, and a
 `project-logos` Storage bucket. Server-rendered public routes use the
 server-only typed catalog library with the publishable key; browser search uses
-a bounded route handler. The admin route uses Supabase Auth for invite-only OTP
-sign-in and has a separate Supabase-backed editorial review and publication
-workflow.
+a bounded route handler. The admin route uses Supabase Auth for invite-only
+email-and-password sign-in and has a separate Supabase-backed editorial review
+and publication workflow.
 A standalone, read-only GitHub REST adapter and local
 single-repository inspection CLI are implemented. M1-02 extends the adapter
 with repository search and adds a separate, bounded Bun worker that writes
@@ -150,9 +150,9 @@ license verification or publication eligibility.
 - The privileged client uses `SUPABASE_SECRET_KEY` and imports `server-only`.
   It does not read or reuse a browser session and has session persistence,
   refresh, and URL detection disabled.
-- `/admin/login` requests an email OTP with `shouldCreateUser: false`; a Server
-  Action verifies the code using `verifyOtp({ type: "email" })`. Auth errors
-  during the request step produce the same generic response for every address.
+- `/admin/login` accepts an email and password and calls
+  `signInWithPassword` in a Server Action. Invalid credentials and
+  non-allowlisted users receive the same generic error.
 - Root `proxy.ts` matches only `/admin` and `/admin/*`. It uses the publishable
   key and `getClaims()` to refresh the SSR cookie session, copies cookie updates
   to both the forwarded request and response, and never creates the privileged
@@ -348,8 +348,8 @@ hosted project or production credential is required. `bun run test:editorial-db`
 uses local Auth identities and PostgreSQL to exercise
 administrator allowlisting, independent license evidence, explicit quality
 review, publication blockers, concurrency, revocation, audit events, and public
-RLS visibility. Playwright also signs in through local OTP/Mailpit and edits a
-real Supabase draft in the production Next.js build.
+RLS visibility. Playwright also signs in with a random local password and edits
+a real Supabase draft in the production Next.js build.
 
 ## M1-06 ingestion operator boundary
 

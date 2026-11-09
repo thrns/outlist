@@ -852,9 +852,8 @@ PostgREST/PostgreSQL decisions, revocation, concurrent edits, restricted and
 incomplete evidence, publication blockers, audit correctness, public RLS,
 published-primary source restriction, safe recovery, deliberate republication,
 and the publication race.
-The browser E2E uses local OTP through Mailpit and edits a real database draft.
-These checks do not run hosted migrations, publish live projects, or validate
-hosted email delivery.
+The browser E2E uses a random local Auth password and edits a real database
+draft. These checks do not run hosted migrations or publish live projects.
 
 ## M1-10 production launch preparation
 
@@ -866,8 +865,8 @@ and activity, integrity findings, GitHub rate limits when a token is set, and
 published, unpublished, and pending-review counts. Credentials are represented
 only as configured/not configured. It never starts a pipeline worker, writes a
 record, or uploads an object. A hosted target requires an explicit project
-reference confirmation; redirect URLs and real OTP delivery remain manual
-checks because the Supabase API does not expose those project settings.
+reference confirmation and a verified HTTPS origin. It also checks that public
+signup is disabled and the email provider is enabled for password sign-in.
 
 The M1-10 forward migration updates the service-only pipeline report to include
 the full M1-09 and M1-10 migration chain. This fixes the earlier report's stale
@@ -890,4 +889,4 @@ license verification, quality verification, or publication was added.
 No hosted migration, production deployment, real GitHub import, or live project
 publication has been performed. Alternatives and public submissions remain
 unavailable. Local tests and fixture-backed reports do not establish hosted
-connectivity, SMTP delivery, catalog contents, or production latency.
+connectivity, Auth settings, catalog contents, or production latency.
