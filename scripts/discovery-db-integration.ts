@@ -309,7 +309,7 @@ async function main() {
   const jobId = await rpc<string>(rpcClient, "start_discovery_job", {
     p_plan_name: "local-integration",
     p_plan_version: marker,
-    p_partitions: keys.map(partition),
+    p_partitions: keys.map((key) => partition(key)),
   });
 
   const claims = await Promise.all(["integration-worker-a", "integration-worker-b"].map((worker) =>
