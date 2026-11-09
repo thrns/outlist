@@ -351,9 +351,11 @@ async function main() {
   const interruptionResumeStages = Array.isArray(resumeAfterInterruption.report.stages)
     ? (resumeAfterInterruption.report.stages as Row[]).map((stage) => ({ stage: stage.stage, status: stage.status, errors: stage.error_events }))
     : [];
-  assert(resumeAfterInterruption.code === 0 && resumeAfterInterruption.report.run_status === "empty"
+  const resumedLineage = resumeAfterInterruption.report.lineage_validation as Row | null;
+  assert(resumeAfterInterruption.code === 0 && resumeAfterInterruption.report.run_status === "complete"
     && resumeAfterInterruption.report.execution_status === "completed"
-    && resumeAfterInterruption.report.end_to_end_project_completed === true,
+    && resumeAfterInterruption.report.end_to_end_project_completed === true
+    && resumedLineage?.success === true && Number(resumedLineage.validated_lineage_count) > 0,
     `A run stopped at a durable stage boundary should safely resume from existing checkpoints: status=${resumeAfterInterruption.report.run_status}; stages=${JSON.stringify(interruptionResumeStages)}`);
 
   const candidate = await admin.from("repository_candidates").select("id,queue_status,review_status,enrichment_status,repository_id,full_name")
