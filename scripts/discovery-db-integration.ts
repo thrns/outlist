@@ -251,6 +251,11 @@ async function main() {
     && pageAlignedCheckpoint.data.pages_fetched === 1 && pageAlignedCheckpoint.data.candidates_found === 100
     && (pageAlignedCheckpoint.data.cursor as { next_page?: number }).next_page === 2,
   "The page cursor and durable counters must advance together only after the full transaction commits.");
+  const isolatedPageAlignedCandidates = await admin.from("repository_candidates")
+    .update({ queue_status: "discarded" } as never)
+    .in("provider_repository_id", pageAlignedIds);
+  assert(!isolatedPageAlignedCandidates.error,
+    `Isolate the page-aligned database fixtures from downstream worker suites: ${isolatedPageAlignedCandidates.error?.message ?? "update failed"}`);
   await rpc<void>(rpcClient, "finish_discovery_job", {
     p_job_id: pageAlignedJob, p_status: "succeeded", p_error_summary: null,
   });
