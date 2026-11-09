@@ -32,7 +32,9 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function rpc<T>(client: RpcClient, name: string, args: Record<string, unknown>): Promise<T> {
   const result = await client.rpc(name, args);
-  if (result.error) throw new Error(`Database RPC failed: ${name} (${result.error.code ?? "unknown"}).`);
+  if (result.error) {
+    throw new Error(`Database RPC failed: ${name} (${result.error.code ?? "unknown"}): ${result.error.message}`);
+  }
   return result.data as T;
 }
 
