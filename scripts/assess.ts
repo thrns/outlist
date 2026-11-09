@@ -76,7 +76,7 @@ type AssessmentOutcomeClass = "completed" | "retryable_failure" | "expired_lease
   | "stale_worker_ownership" | "interrupted_process" | "database_operation_failure" | "permanent_failure";
 
 function safeDatabaseCode(code: unknown): string | undefined {
-  return typeof code === "string" && /^\d{5}$/.test(code) ? code : undefined;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
 }
 
 function databaseOutcome(code: string | undefined): AssessmentOutcomeClass {

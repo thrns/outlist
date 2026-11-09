@@ -23,6 +23,20 @@ function searchRepository(id: number): GitHubSearchRepository {
   } as GitHubSearchRepository;
 }
 
+function partitionProgressQuery(status: string) {
+  const query = {
+    select: () => query,
+    eq: () => query,
+    then(
+      resolve: (result: { data: { status: string }[]; error: null }) => unknown,
+      reject?: (error: unknown) => unknown,
+    ) {
+      return Promise.resolve({ data: [{ status }], error: null }).then(resolve, reject);
+    },
+  };
+  return query;
+}
+
 describe("discovery CLI safety", () => {
   it("defaults to a read-only bounded plan and requires explicit execution", () => {
     expect(parseDiscoveryArguments(["--plan", "initial"])).toMatchObject({ mode: "dry-run", maxQueries: 2, maxPages: 2, maxCandidates: 200 });
@@ -123,11 +137,7 @@ describe("discovery CLI safety", () => {
     });
     const database = {
       rpc,
-      from: () => ({
-        select: () => ({
-          eq: () => Promise.resolve({ data: [{ status: "completed" }], error: null }),
-        }),
-      }),
+      from: () => partitionProgressQuery("completed"),
     } as unknown as NonNullable<DiscoveryCliDependencies["supabase"]>;
     const github = {
       searchRepositories: vi.fn(async () => ({
@@ -179,11 +189,7 @@ describe("discovery CLI safety", () => {
     });
     const database = {
       rpc,
-      from: () => ({
-        select: () => ({
-          eq: () => Promise.resolve({ data: [{ status: "pending" }], error: null }),
-        }),
-      }),
+      from: () => partitionProgressQuery("pending"),
     } as unknown as NonNullable<DiscoveryCliDependencies["supabase"]>;
     const github = {
       searchRepositories: vi.fn(async () => ({

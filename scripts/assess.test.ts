@@ -1,6 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseAssessmentArguments, runAssessmentCli, type AssessmentCliDependencies } from "./assess";
 
+function categoriesQuery(): NonNullable<AssessmentCliDependencies["supabase"]>["from"] {
+  const query = {
+    select: () => query,
+    eq: () => query,
+    in: () => query,
+    order: () => query,
+    limit: () => Promise.resolve({ data: [], error: null }),
+  };
+  return vi.fn((table: string) => {
+    if (table !== "categories") throw new Error(`Unexpected assessment query: ${table}`);
+    return query;
+  }) as unknown as NonNullable<AssessmentCliDependencies["supabase"]>["from"];
+}
+
 describe("assessment CLI", () => {
   it("defaults to a mutation-free dry run", async () => {
     const rpc = vi.fn(); const lines: string[] = [];
@@ -17,48 +31,43 @@ describe("assessment CLI", () => {
     expect(() => parseAssessmentArguments(["--resume"])).toThrow();
   });
 
-  it("finalizes a started job and emits a sanitized database failure summary", async () => {
+  it.each([
+    { label: "serialization failure", code: "40001", outcome: "stale_worker_ownership", failureCode: "40001" },
+    { label: "lock contention", code: "55P03", outcome: "retryable_failure", failureCode: "55P03" },
+    { label: "connection failure", code: "08006", outcome: "database_operation_failure", failureCode: "08006" },
+    { label: "free-form text", code: "private database code", outcome: "database_operation_failure", failureCode: null },
+    { label: "malformed SQLSTATE", code: "PGRST000", outcome: "database_operation_failure", failureCode: null },
+    { label: "short SQLSTATE", code: "4000", outcome: "database_operation_failure", failureCode: null },
+    { label: "punctuated SQLSTATE", code: "55P0!", outcome: "database_operation_failure", failureCode: null },
+  ])("reports a $label failure at the claiming stage and finalizes the job", async ({ code, outcome, failureCode }) => {
     const rpc = vi.fn(async (name: string) => {
       if (name === "start_github_repository_assessment_job") return { data: "job-existing", error: null };
-      if (name === "claim_github_repository_assessments") return { data: null, error: { code: "08006", message: "private database connection detail" } };
+      if (name === "claim_github_repository_assessments") return { data: null, error: { code, message: "private database connection detail" } };
       if (name === "finish_github_repository_assessment_job") return { data: { status: "partial", open_assessments: 4 }, error: null };
       return { data: null, error: null };
     });
     const stdout: string[] = [];
+    const from = categoriesQuery();
     const status = await runAssessmentCli(["--execute", "--max-repositories", "4"], {
-      supabase: { rpc, from: vi.fn() } as unknown as AssessmentCliDependencies["supabase"],
+      supabase: { rpc, from } as unknown as AssessmentCliDependencies["supabase"],
       writeStdout: (line) => stdout.push(line),
     });
     const summary = JSON.parse(stdout.at(-1)!) as Record<string, unknown>;
     expect(status).toBe(1);
+    expect(from).toHaveBeenCalledWith("categories");
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "start_github_repository_assessment_job",
+      "claim_github_repository_assessments",
+      "finish_github_repository_assessment_job",
+    ]);
     expect(summary).toMatchObject({
-      event: "assessment_summary", job_id: "job-existing", outcome_class: "database_operation_failure",
-      failure_stage: "claim", failure_code: "08006", job_status: "partial",
+      event: "assessment_summary", job_id: "job-existing", outcome_class: outcome,
+      failure_stage: "claim", failure_code: failureCode, job_status: "partial",
       finalization: { attempted: true, ok: true, status: "partial", openAssessments: 4 },
       source_details_omitted: true, automatic_publication: false, automatic_logo_approval: false,
     });
     expect(stdout.join("")).not.toContain("private database connection detail");
-    expect(rpc.mock.calls.at(-1)?.[0]).toBe("finish_github_repository_assessment_job");
-  });
-
-  it("reports PostgreSQL lock contention as retryable instead of a database failure", async () => {
-    const rpc = vi.fn(async (name: string) => {
-      if (name === "start_github_repository_assessment_job") return { data: "job-existing", error: null };
-      if (name === "claim_github_repository_assessments") return { data: null, error: { code: "55P03" } };
-      if (name === "finish_github_repository_assessment_job") return { data: { status: "partial", open_assessments: 4 }, error: null };
-      return { data: null, error: null };
-    });
-    const stdout: string[] = [];
-    const status = await runAssessmentCli(["--execute", "--max-repositories", "4"], {
-      supabase: { rpc, from: vi.fn() } as unknown as AssessmentCliDependencies["supabase"],
-      writeStdout: (line) => stdout.push(line),
-    });
-    const summary = JSON.parse(stdout.at(-1)!) as Record<string, unknown>;
-    expect(status).toBe(1);
-    expect(summary).toMatchObject({
-      outcome_class: "retryable_failure", failure_code: "55P03", job_status: "partial",
-      failure_classes: ["retryable_failure"],
-    });
+    if (failureCode === null) expect(stdout.join("")).not.toContain(code);
   });
 
   it("recovers only the injected existing job through scoped RPCs", async () => {

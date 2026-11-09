@@ -141,9 +141,17 @@ describe("assessment recovery CLI guards", () => {
       event: "assessment_recovery_report", outcome_class: "completed", requested_job_id: jobId,
       initial_job_status: "running", final_job_status: "succeeded",
       assessments: { total: 4, completed: 4 },
-      verification: { requested_existing_job_reused: true, no_new_ingestion_jobs: true, no_discovery_or_enrichment_work: true, assessment_count_within_limit: true, verified: true },
+      verification: {
+        requested_existing_job_reused: true,
+        no_new_ingestion_jobs_in_observed_snapshot: true,
+        ingestion_job_snapshot_limit: 1000,
+        recovery_cli_invoked_no_discovery_or_enrichment_workers: true,
+        assessment_count_within_limit: true,
+        verified: true,
+      },
       publication_or_logo_approval_performed: false,
     });
+    expect(report.verification).not.toHaveProperty("no_discovery_or_enrichment_work");
     expect(db.rpc.mock.calls.map(([name]) => name)).toEqual(["pipeline_operator_report", "pipeline_operator_report"]);
   });
 });

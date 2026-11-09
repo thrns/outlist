@@ -4,6 +4,7 @@ import { runAssessmentProcess, type AssessmentCliDependencies } from "./assess";
 
 const PROJECT_REF = "hvunezhzpnpdkfiqgaaa";
 const MAX_ASSESSMENTS = 4;
+const INGESTION_JOB_SNAPSHOT_LIMIT = 1000;
 const USAGE = `Usage:
   bun run recover:assessment -- --execute --resume --allow-hosted-writes \
     --confirm-project-ref ${PROJECT_REF} --job-id <existing-assessment-job-uuid> --max-assessments 4
@@ -208,8 +209,9 @@ export async function runAssessmentRecoveryCli(
     operator: { active_leases: finalActiveLeases, running_jobs: finalOperator?.running_jobs ?? null },
     verification: {
       requested_existing_job_reused: finalJob?.id === parsed.jobId,
-      no_new_ingestion_jobs: finalJobIds.ok && newlyCreatedJobs.length === 0,
-      no_discovery_or_enrichment_work: finalJobIds.ok && newlyCreatedJobs.length === 0,
+      no_new_ingestion_jobs_in_observed_snapshot: finalJobIds.ok && newlyCreatedJobs.length === 0,
+      ingestion_job_snapshot_limit: INGESTION_JOB_SNAPSHOT_LIMIT,
+      recovery_cli_invoked_no_discovery_or_enrichment_workers: true,
       assessment_count_within_limit: assessments.length <= MAX_ASSESSMENTS,
       verified,
     },
@@ -237,7 +239,7 @@ async function safeQuery(query: PromiseLike<DbResult>): Promise<DbResult> {
 
 async function readAssessmentJobIds(supabase: RecoveryDatabase): Promise<{ ok: boolean; ids: string[] }> {
   const result = await safeQuery(supabase.from("ingestion_jobs").select("id,job_type")
-    .in("job_type", ["github_discovery", "github_enrichment", "github_assessment"]).limit(1000));
+    .in("job_type", ["github_discovery", "github_enrichment", "github_assessment"]).limit(INGESTION_JOB_SNAPSHOT_LIMIT));
   if (result.error || !Array.isArray(result.data)) return { ok: false, ids: [] };
   return { ok: true, ids: result.data.filter(isRecord).map((row) => row.id)
     .filter((id): id is string => typeof id === "string") };
