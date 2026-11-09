@@ -723,11 +723,11 @@ isOneToOne: false
 "admin_verify_project_quality":
 { Args: { "p_actor": string,"p_confirm_review": boolean,"p_expected_revision": number,"p_expected_source_observed_at": string,"p_project_id": string,"p_reason": string }; Returns: Json
                            },
-"begin_github_repository_assessment_recovery":
-{ Args: { "p_job_id": string,"p_max_assessments": number,"p_worker_id": string }; Returns: Json
-                           },
 "approve_project_logo_candidate":
 { Args: { "p_approval_provenance": Json,"p_approval_token": string,"p_content_digest": string,"p_logo_id": string,"p_media_type": string,"p_storage_path": string,"p_worker_id": string }; Returns: Json
+                           },
+"begin_github_repository_assessment_recovery":
+{ Args: { "p_job_id": string,"p_max_assessments": number,"p_worker_id": string }; Returns: Json
                            },
 "claim_discovery_partitions":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
@@ -794,13 +794,13 @@ isOneToOne: false
 "pipeline_operator_report":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
+"pipeline_operator_report_m2_04_previous":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "pipeline_operator_report_v1":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
 "pipeline_operator_report_v2":
-{ Args: Record<PropertyKey, never>; Returns: Json
-                           },
-"pipeline_operator_report_m2_04_previous":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
 "pipeline_operator_verify_resume":
