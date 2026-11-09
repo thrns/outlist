@@ -346,8 +346,11 @@ async function main() {
     && recoveredSummary?.job_status === "succeeded" && recoveryPreflight.queued_assessments === 3
     && recoveryPreflight.expired_processing_assessments === 1,
   `Recovery must resume the requested job and complete at most its four existing assessments: ${JSON.stringify(recoveredSummary)}`);
+  const recoveryRepositories = await rows<Row>(db.from("repositories").select("id,provider_repository_id")
+    .in("provider_repository_id", recoveryIds.map(String)), "Read recovery repositories after recovery");
+  assert(recoveryRepositories.length === recoveryIds.length, "Recovery must retain all five canonical repositories.");
   const recoveredRows = await rows<Row>(db.from("repository_assessments").select("id,repository_id,status,attempts,max_attempts,job_id,result")
-    .in("repository_id", recoveryIds.map(String)), "Read assessments after recovery");
+    .in("repository_id", recoveryRepositories.map((repository) => String(repository.id))), "Read assessments after recovery");
   const preservedAssessmentAfter = recoveredRows.find((row) => row.id === preservedAssessment.id);
   assert(recoveredRows.length === 5 && recoveredRows.every((row) => row.job_id === recoveryJob
     && ["assessed", "needs_review"].includes(String(row.status)) && Number(row.attempts) <= Number(row.max_attempts)
