@@ -5,6 +5,10 @@ authentication. Public signup, registration, passwordless login, and public
 password-reset flows are not part of the application. A trusted operator
 provisions Auth users and the separate administrator UUID allowlist.
 
+Production administrator password sign-in has been verified. The ingestion
+preflight rechecks that an allowlisted administrator exists, the Email provider
+is enabled, and public signup is disabled before reporting ingestion ready.
+
 ## Authentication and authorization
 
 1. `/admin/login` accepts an email address and password. It has no OTP or Magic
@@ -43,9 +47,9 @@ be printed in logs or committed files.
 ## Supabase configuration
 
 In local `supabase/config.toml`, public signup is disabled. The Supabase email
-provider must remain enabled for email/password sign-in. On the hosted project,
-verify these settings in **Authentication → Sign In / Providers** before
-launch:
+provider must remain enabled for email/password sign-in. The read-only
+ingestion and launch preflight checks the hosted settings below. If preflight
+reports a mismatch, review it in **Authentication → Sign In / Providers**:
 
 - Enable the Email provider for password authentication.
 - Disable **Allow new users to sign up**. Do not use public signup to provision

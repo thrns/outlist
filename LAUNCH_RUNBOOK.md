@@ -1,196 +1,122 @@
-# Outlist production launch and first pilot
+# Outlist production ingestion and launch runbook
 
-M1-10 prepares the deployment and operator procedure. The production Supabase
-project, hosted migrations, website deployment, and live GitHub ingestion have
-not been executed. The local tests prove only the local schema, Auth, Storage,
-public search, editorial controls, and bounded worker behavior described in
-CI.
+## Current production state
 
-## 1. Environment values
+The production Supabase project `hvunezhzpnpdkfiqgaaa` is initialized with the
+repository schema and the administrator can sign in with a password. No live
+GitHub ingestion, project publication, or Vercel deployment has been performed.
+This milestone adds a read-only ingestion readiness check; it does not run the
+pilot.
 
-| Variable | Required where | Purpose |
+## 1. Confirm the hosted Supabase setup
+
+Use the production project and its existing migration history. The preflight
+checks the hosted project reference, explicit environment label, migration
+history, required pipeline operations and grants, public RLS behavior, all 11
+categories, logo Storage configuration, public catalog search, administrator
+authorization, current jobs and leases, and integrity findings. It does not
+apply migrations or change database or Storage data. If migration history or
+schema readiness is incomplete, stop and use the separately reviewed database
+change process; do not repair production during a preflight.
+
+| Variable | Where to configure it | Purpose |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | App build and runtime; operator preflight | Supabase API URL. The hostname determines the project reference. |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | App build and runtime; operator preflight | Public key used by anonymous catalog reads and Auth. This key is intended to be public; RLS is the security boundary. |
-| `SUPABASE_SECRET_KEY` | App runtime for admin actions; trusted operator preflight and pipeline | Server-only key used for fresh admin allowlist checks and restricted database operations. Never prefix it with `NEXT_PUBLIC_`. |
-| `OUTLIST_SUPABASE_ENVIRONMENT` | Operator preflight and pipeline | Explicit target label: `local`, `development`, `staging`, or `production`. |
-| `GITHUB_TOKEN` | Operator process only, optional | Server-only read access for GitHub inspection, discovery, and enrichment. No GitHub write scope is required. |
+| `NEXT_PUBLIC_SUPABASE_URL` | Operator environment and Vercel | Supabase API URL; its hostname identifies the project. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Operator environment and Vercel | Public catalog reads and Auth. RLS is the security boundary. |
+| `SUPABASE_SECRET_KEY` | Trusted operator environment and Vercel server runtime only | Server-only allowlist checks and restricted database operations. Never expose it to the browser. |
+| `OUTLIST_SUPABASE_ENVIRONMENT` | Operator environment and Vercel | Explicit target label; set to `production` for the production project. |
+| `GITHUB_TOKEN` | Trusted operator environment only | Authenticated read access for GitHub inspection and bounded ingestion. No write scope is required. |
+| `OUTLIST_PUBLIC_ORIGIN` | Operator environment for website launch checks | Actual deployed HTTPS origin; not needed for ingestion readiness. |
 
-`bun run launch:preflight` prints only whether variables are configured. It
-does not print values. Hosted preflight also checks an HTTPS public origin and
-checks Supabase Auth provider state, disabled public signup, and a nonempty
-administrator allowlist. Set `OUTLIST_PUBLIC_ORIGIN` to the deployed HTTPS
-origin. Password sign-in does not use an email callback or depend on Auth email
-delivery.
+Keep separate project credentials, Auth settings, and deployment environments
+for development, staging, and production. Never reuse production credentials
+in local development or CI. GitHub Actions uses disposable local Supabase and
+deterministic GitHub fixtures.
 
-Use separate Supabase projects, key sets, GitHub secrets, app deployment
-environments, domains, and Auth settings for development, staging, and
-production. Do not reuse production credentials in local development or CI.
-GitHub Actions uses disposable local Supabase and deterministic GitHub fixtures;
-it does not need hosted credentials or a live GitHub token.
+## 2. Confirm administrator authorization
 
-## 2. Minimum website deployment
+Production password sign-in is already working. The read-only preflight
+rechecks that an allowlisted administrator exists, the Supabase Email provider
+is enabled, and public signup is disabled before ingestion readiness can pass.
+Keep email confirmation enabled. Provision or change administrator access only
+through the trusted procedure in [ADMIN_AUTH.md](ADMIN_AUTH.md); never use
+public signup or add administrator identities in a migration.
 
-Use a managed Linux app service or container that supports Bun and runs a
-long-lived Next.js server process. The repository already supplies the build
-and start commands:
+The application has no OTP, Magic Link, registration, or public password-reset
+flow. Administrator authorization is tied to the allowlisted Auth UUID, not an
+email address or browser state.
+
+## 3. Verify ingestion readiness without Vercel
+
+Configure the production Supabase URL, publishable key, server secret, and a
+server-only GitHub token in the trusted operator environment. Set the explicit
+production label, then run:
 
 ```bash
-bun install --frozen-lockfile
-bun run build
-bun run start
+export PROJECT_REF="hvunezhzpnpdkfiqgaaa"
+export OUTLIST_SUPABASE_ENVIRONMENT=production
+bun run launch:preflight -- --purpose ingestion --confirm-project-ref "$PROJECT_REF"
 ```
 
-Use the repository-pinned Bun version (`.bun-version`, currently 1.3.14).
-Provide `PORT` from the host. Run with `NODE_ENV=production`. Configure the two
-`NEXT_PUBLIC_SUPABASE_*` values at build and runtime because public variables
-can be embedded in client bundles. Set `SUPABASE_SECRET_KEY` only in the
-server-side runtime secret store; it is not needed for the static build unless
-the hosting process specifically requires runtime variables during build.
-Keep `GITHUB_TOKEN` out of the website service unless the operator intentionally
-runs ingestion from that environment; the normal process is manual operator
-execution from a controlled workstation or job environment.
+This command is read-only. It checks the production project reference and
+environment, the migration chain and pipeline schema/grants, public catalog
+RPC and anonymous RLS reads, category and Storage readiness, Auth settings and
+administrator allowlist, GitHub API authentication and the budget for the
+bounded pilot, running jobs, active worker leases, and critical integrity
+findings. It does not require `OUTLIST_PUBLIC_ORIGIN`, a deployed website, or
+Vercel environment variables. A successful ingestion check can report
+`ingestion_ready: true` and `launch_ready: false`; `hosted_verification` remains
+partial until website deployment verification occurs.
 
-Terminate HTTPS at the hosting edge, attach the chosen domain, and confirm the
-application is only served over HTTPS. The app sets secure session cookies in
-production. In Supabase **Authentication → Sign In / Providers**, keep the
-Email provider enabled for password authentication, keep **Allow new users to
-sign up** disabled, and keep email confirmation enabled. Confirm that each
-administrator controls their intended email before marking it confirmed.
-There is no OTP, Magic Link, registration, email callback, or public
-password-reset flow in the application. Create or configure the Auth user and
-add its returned UUID to `public.admin_users` using the trusted steps in
-[ADMIN_AUTH.md](ADMIN_AUTH.md); never add an administrator in a migration or
-through public signup.
+Review the report. It must show the approved production project reference,
+`ingestion_ready: true`, no ingestion blockers, all expected migrations
+verified, a ready public catalog and pipeline schema, the configured
+administrator authorization, enough GitHub budget, no running ingestion jobs
+or leases, and no critical integrity findings. The command's exit status is
+zero only when ingestion-specific checks pass. A pass does not authorize or
+start ingestion.
 
-The `project-logos` Storage bucket is intentionally public so approved logo
-URLs can load on public project cards and details. The application uses only
-approved logo records and falls back to deterministic initials when no approved
-logo exists. Candidate discovery does not upload logo files. Keep pending or
-unreviewed logos out of public Storage; verify the bucket's 2 MiB limit and PNG,
-JPEG, and WebP input MIME restrictions after migration.
-
-Keep production build output, deployment artifacts, GitHub Actions logs, and
-platform logs free of secret keys, access tokens, Auth codes, and request
-headers. Publishable keys are expected in the browser; secret keys and GitHub
-tokens are not. Use the hosting provider's server request logs and Supabase
-logs to diagnose connectivity. Public pages show explicit catalog errors and
-do not fall back to the JSON sample data. Inspect sanitized server logs and
-provider request IDs rather than logging environment values.
-
-## 3. Verify and apply migrations
-
-Complete these steps in order. A preflight is read-only and does not authorize
-any migration or data write.
-
-1. In Supabase Dashboard, open the intended project and copy its reference from
-   Project Settings. Compare it with the subdomain in
-   `NEXT_PUBLIC_SUPABASE_URL`. Set `OUTLIST_SUPABASE_ENVIRONMENT` to the exact
-   intended environment. Do not proceed if they disagree.
-2. Review the local migration files and current remote migration history:
-
-   ```bash
-   export PROJECT_REF="<reviewed-project-ref>"
-   bun run supabase migration list --remote="$PROJECT_REF"
-   ```
-
-   Compare every version with the sorted files in `supabase/migrations/`.
-   Investigate unexpected or partially applied versions before continuing.
-3. Preview the pending chain. This is a dry run and must show only migrations
-   reviewed for this release:
-
-   ```bash
-   bun run supabase db push --remote="$PROJECT_REF" --skip-vault --dry-run
-   ```
-
-4. Take and verify a restorable Supabase backup/PITR restore point according to
-   the project's recovery policy. Keep database dumps outside the repository
-   with restrictive file permissions.
-5. Applying the migrations is a separate human-controlled production step.
-   Only after explicit approval for the target and migration set, run:
-
-   ```bash
-   bun run supabase db push --remote="$PROJECT_REF" --skip-vault
-   ```
-
-   The command changes the hosted database schema. Do not run it as part of
-   preflight, deployment, or an unreviewed CI job. It does not import projects
-   or publish catalog entries.
-6. Confirm completion, database security, and public catalog state:
-
-   ```bash
-   bun run supabase migration list --remote="$PROJECT_REF"
-   bun run supabase db lint --remote="$PROJECT_REF" --schema public,private --fail-on error
-   bun run supabase db query --remote="$PROJECT_REF" --read-only \
-     --file supabase/ci/assert_launch_security.sql
-   bun run launch:preflight -- --confirm-project-ref "$PROJECT_REF"
-   ```
-
-   The migration list must match the repository. The SQL security check only
-   reads catalog metadata and verifies RLS, anonymous write denial, the public
-   invoker-search function, administrator allowlist privacy, and service-only
-   publication. Preflight checks the public API through an anonymous key,
-   counts published/unpublished/pending-review records, checks the logo bucket,
-   and runs the service-only integrity report. A fresh database is expected to
-   have zero published projects and zero unpublished projects before ingestion.
-
-## 4. Controlled first hosted pilot
-
-Do not run this procedure until migration application, app configuration, and
-live ingestion have each received their own authorization. Start with the
-following environment and checks:
+For additional read-only context, inspect the worker status and integrity
+report:
 
 ```bash
-export PROJECT_REF="<reviewed-project-ref>"
-export OUTLIST_SUPABASE_ENVIRONMENT=production
-export OUTLIST_PUBLIC_ORIGIN="https://<deployed-domain>"
-# Verify this is the deployed HTTPS origin before running the preflight.
-
-bun run launch:preflight -- --confirm-project-ref "$PROJECT_REF"
 bun run pipeline -- --status
 bun run pipeline -- --audit
 ```
 
-Stop if preflight has blockers, the project reference is unexpected, any
-critical integrity finding exists, an ingestion job or lease is active, or
-the GitHub budget is insufficient. Fix environment, Auth, migration, bucket,
-or integrity issues before requesting authorization for a live pilot.
+These checks do not claim that hosted workers ran or that any project was
+ingested.
 
-After separate approval for hosted writes and real GitHub reads, run the
-existing bounded live-smoke mode:
+## 4. Run a separately authorized bounded GitHub pilot
+
+The first production write requires a separate operator authorization after
+reviewing the successful preflight and confirming the target. Start with the
+existing live-smoke cap:
 
 ```bash
 bun run pipeline -- --live-smoke --execute \
   --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
 ```
 
-This run is capped at one GitHub search query and page, ten discovered
+Hosted writes require both `--execute` and `--allow-hosted-writes`, together
+with a matching `--confirm-project-ref`. Do not automate a run after preflight.
+The live-smoke ceiling is one GitHub search query and page, ten discovered
 candidates, five enrichments, five assessments, and five logo candidates. It
-does not upload logos, verify licenses, mark quality as human-verified, or
-publish projects. Preserve the structured report and record these stages
-separately:
+does not upload logos, mark a license or quality as human-verified, approve a
+logo, or publish a project.
 
-- discovered GitHub candidates;
-- successfully enriched public repositories;
-- completed repository assessments;
-- pending-review project drafts with a complete source-to-draft lineage;
-- logo candidates awaiting separate review.
+Keep the structured report and distinguish these counts: discovered GitHub
+candidates, successfully enriched public repositories, completed assessments,
+pending-review drafts, and published projects. Require a coherent lineage for
+any draft: stable GitHub repository ID, discovery candidate, validated source
+observations, canonical repository, assessment, project draft, and review
+queue. Inspect partial failures, retry times, active leases, and the last
+durable checkpoint. Only public, available, non-private, non-disabled sources
+may progress. Do not copy private source data into logs or reports.
 
-Candidate totals, enriched repository totals, assessed repositories, drafts,
-and published projects are different measures. Ten candidates do not mean ten
-enriched repositories, and one pending draft does not mean one published
-project. Require one coherent lineage joining the same stable GitHub
-repository ID across discovery, source observations, canonical repository,
-assessment, project draft, and review queue. Inspect partial/failure counts,
-the retry schedule, current leases, and last durable discovery checkpoint.
-Confirm every candidate and repository being considered is public, available,
-non-private, and non-disabled. Do not expose or copy private source data into
-public logs or reports.
-
-If a stage fails or rate-limits, preserve its report and durable checkpoint.
-Wait until the reported reset, inspect `--status` and `--audit`, confirm the
-previous worker stopped and its lease expired, then resume only when the stored
-checkpoint and retry schedule make that safe:
+If a stage fails or is rate-limited, retain its report and checkpoint. Wait for
+the reported reset, inspect `--status` and `--audit`, and confirm the previous
+worker stopped and its lease expired before any separately authorized resume:
 
 ```bash
 bun run pipeline -- --status
@@ -199,31 +125,31 @@ bun run pipeline -- --resume --execute --live-smoke \
   --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
 ```
 
-The system does not infer human license or quality verification from GitHub
-metadata. Sign in at `/admin/login` using the provisioned allowlisted account.
-For each draft, independently inspect the current repository and source
-evidence, correct project details and categories, record license evidence,
-complete the separate human quality review, resolve blocking review items,
-and publish only that individually approved project. Leave uncertain,
-restricted, stale, or incomplete drafts pending review. Do not approve a logo
-unless its source and attribution have also been reviewed.
+## 5. Review drafts and publish individually
 
-After one deliberate publication, use anonymous requests to verify that the
-project appears in Explore/search and its category, that the detail page has
-the correct name, summary, description, source links, license, logo or fallback,
-and category assignment, and that the project is absent from any unpublished
-or restricted state. Confirm published visibility changes are visible without
-an admin session. Use the deployed-site smoke checks below. Never report the
+Sign in at `/admin/login` with the provisioned allowlisted administrator. For
+each pending draft, inspect the current repository and source evidence, correct
+details and categories, record license evidence, complete the separate human
+quality review, resolve blocking items, and publish only that individually
+approved project. Leave uncertain, restricted, stale, or incomplete drafts in
+review. Verify logo source and attribution before approving a logo. GitHub
+metadata alone does not establish human license or quality verification.
+
+After publication, use anonymous requests to verify that the project appears
+in search and its category, that its detail page shows correct metadata,
+source links, license, and approved logo or deterministic fallback, and that
+it is absent from unpublished or restricted states. Confirm the published
+visibility is available without an administrator session. Never report
 candidate, enriched, assessment, or pending-review totals as the published
 catalog count.
 
-## 5. Expand carefully
+## 6. Expand ingestion gradually
 
-The first live-smoke limits are ceilings for the pilot. After reviewing its
-rate use, classification success, failure recovery, editorial queue, and
-operating cost, expand in bounded manual batches. The pipeline limits each
-invocation to 50 candidates, 25 enrichments, 25 assessments, and 25 logo
-candidate checks. A later batch can use, for example:
+After the pilot, review rate use, classification results, failure recovery,
+editorial queue size, manual review capacity, and provider costs. Increase
+manual batch limits gradually and review every report before repeating. The
+pipeline hard ceilings are 50 candidates, 25 enrichments, 25 assessments, and
+25 logo-candidate checks per run. For example:
 
 ```bash
 bun run pipeline -- --execute --max-queries 2 --max-pages 1 \
@@ -232,108 +158,112 @@ bun run pipeline -- --execute --max-queries 2 --max-pages 1 \
   --confirm-project-ref "$PROJECT_REF"
 ```
 
-Review the report before every repeat. Use GitHub Search's remaining budget and
-reset, Core API budget, queue backlog, retry schedule, classification success,
-manual review capacity, and actual provider/hosting cost to set the next batch.
-For 100+ and later 1,000+ discovered and enriched repositories, repeat these
-batches as checkpoints and review each measured stage count. Do not automate
-recurring ingestion in this milestone. Discovery is a bounded search sample,
-not a complete crawl. A target of 1,000 published projects is not supported
-until 1,000 projects have actually passed independent editorial review and
-publication.
+Use GitHub Search and Core API budgets, queue backlog, retries, classification
+success, and review capacity to set each next batch. Do not automate recurring
+ingestion in this milestone. Discovery is a bounded search sample, not a
+complete crawl. A target of 1,000 published projects is unsupported until
+1,000 projects pass independent editorial review and publication.
 
-## 6. Deployed-site smoke checks
+## 7. Deploy the website to Vercel
 
-Run after each website release and after the first publication. Set `ORIGIN` to
-the deployed HTTPS origin. Use an already approved project slug and a known
-category slug for the final two requests.
+Deploy the Next.js application to the production Vercel project only after the
+ingestion and editorial workflow is ready for public use. Configure
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` for the
+production build. Provide `SUPABASE_SECRET_KEY` only to the server runtime;
+never expose it to client bundles. Set `OUTLIST_SUPABASE_ENVIRONMENT=production`
+for the production deployment. Keep `GITHUB_TOKEN` in the trusted operator
+environment rather than the website deployment unless the operator explicitly
+chooses to run workers there.
+
+Use the repository's pinned Bun version (`.bun-version`, currently 1.3.14),
+build with `bun run build`, and serve with the Vercel Next.js runtime. Configure
+the real production domain and HTTPS at Vercel. Do not put an example, preview,
+or fabricated HTTPS origin into `OUTLIST_PUBLIC_ORIGIN`.
+
+## 8. Complete HTTPS and public launch verification
+
+Once the Vercel deployment and production domain are live, configure
+`OUTLIST_PUBLIC_ORIGIN` in the trusted operator environment with that exact
+HTTPS origin, without a path or trailing slash. Run the default launch
+preflight, which retains website-origin requirements:
 
 ```bash
-curl -fsS "$ORIGIN/" >/dev/null
-curl -fsS "$ORIGIN/explore" >/dev/null
-curl -fsS "$ORIGIN/categories" >/dev/null
-curl -fsS "$ORIGIN/category/<active-category-slug>" >/dev/null
-curl -fsS "$ORIGIN/project/<published-project-slug>" >/dev/null
-curl -fsS "$ORIGIN/admin/login" >/dev/null
-curl -fsS "$ORIGIN/api/catalog/search?q=<three-or-more-characters>"
+bun run launch:preflight -- --confirm-project-ref "$PROJECT_REF"
 ```
 
-Also verify in a private browser session that an unpublished slug returns the
-not-found state, while the deliberately published project appears in anonymous
-search and detail pages. Verify filters by category, license, and language;
-verify the project logo or deterministic fallback and its source links; verify
-the admin review page requires password authentication and an allowlisted Auth UUID. A catalog
-database failure should produce the public error state or an API `503` with no
-sample-project fallback or secret details. A short or empty API query has its
-documented empty response; malformed input returns `400`.
+Then verify the deployed site and public catalog. Use an already published
+project slug and active category slug for the final requests. Set those two
+shell variables to actual values before running the commands:
 
-Do not create a test restricted repository or expose private repository
-details to exercise safety. The disposable-local pgTAP and integration suites
-exercise anonymous RLS, publication guards, restricted-repository exclusion,
-and the system-origin demotion. For the hosted pilot, observe that a
-restricted-source result never appears in anonymous search. If a real published
-primary source becomes restricted, the existing system-origin transition
-moves the project to `pending_review` and public RLS hides it. Recovery restores
-source availability only; current evidence, renewed human review, and a new
-explicit publication decision are required.
+```bash
+export CATEGORY_SLUG="<active-category-slug>"
+export PROJECT_SLUG="<published-project-slug>"
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/explore" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/categories" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/category/$CATEGORY_SLUG" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/project/$PROJECT_SLUG" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/admin/login" >/dev/null
+curl -fsS "$OUTLIST_PUBLIC_ORIGIN/api/catalog/search?q=<three-or-more-characters>"
+```
 
-## 7. Recovery and rollback
+In a private browser session, confirm an unpublished slug is not found and the
+deliberately published project appears in anonymous search and details. Verify
+category, license, and language filters, logo or fallback, and source links.
+A database failure must produce the explicit public error state or an API
+`503`, without sample-project fallback or secret details. Short or empty API
+queries return the documented empty response; malformed input returns `400`.
+Do not create a test restricted repository or expose private repository data.
 
-**Website deployment failure:** route traffic back to the last known-good app
-artifact. Keep the database at its current migration level. A website rollback
-does not undo database migrations.
+## Recovery and rollback
+
+**Website deployment failure:** route traffic back to the last known-good
+Vercel artifact. Keep the database at its current migration level; a website
+rollback does not undo database changes.
 
 **Wrong app environment values:** remove traffic, compare the configured host
-and project reference, replace only the affected environment values from the
-correct environment's secret store, restart/redeploy the app, then repeat
-preflight and smoke checks. Never print secrets while diagnosing.
+and project reference, replace only affected values from the correct secret
+store, redeploy, and repeat preflight and smoke checks. Never print secrets.
 
 **Supabase connectivity failure:** keep public routes in their explicit error
-state; do not restore JSON demo data as a fallback. Check Supabase service
+state; do not restore JSON demo data as fallback. Check Supabase service
 health, project URL, network allowlists, publishable key, server secret key,
-Auth and PostgREST logs. Restore app traffic only after anonymous search and
-admin authentication work again.
+Auth, and PostgREST logs. Restore traffic only after anonymous search and
+administrator authentication work again.
 
-**GitHub rate limit:** stop issuing requests, retain the structured report and
-database checkpoints, wait for the relevant `core` or `search` reset, then
-recheck the budget. Do not reset queues or start another overlapping run.
+**GitHub rate limit:** stop issuing requests, retain the report and durable
+checkpoints, wait for the relevant Core or Search reset, then recheck budget.
+Do not reset queues or start another overlapping run.
 
-**Interrupted ingestion:** run `pipeline -- --status` and `pipeline -- --audit`,
-inspect the durable checkpoint and retry time, and confirm no worker remains
-active. Resume with the same project reference only after confirming the
-checkpoint is safe. Earlier committed stage data remains; rerun counts must
-distinguish reused records from newly committed records.
+**Interrupted ingestion:** inspect `pipeline -- --status` and
+`pipeline -- --audit`, checkpoints, and retry time. Confirm no worker remains
+active. Resume only after verifying that the checkpoint is safe; reports must
+distinguish reused records from new commits.
 
-**Failed migration:** stop the migration command and preserve its exact output.
-Compare the migration history and schema to the reviewed chain before retrying.
-Do not edit an applied historical migration, mark a migration applied by hand,
-or assume the whole chain rolled back. Correct forward with a reviewed new
-migration. Use the authorized restore/PITR procedure only after a database
-owner evaluates the data impact. Database recovery is separate from website
-rollback.
+**Failed future migration:** stop and preserve the exact output. Compare
+migration history and schema to the reviewed chain before retrying. Never edit
+an applied historical migration or mark it applied by hand. Correct forward
+with a separately reviewed migration, or follow the authorized recovery/PITR
+procedure after a database owner evaluates the impact.
 
 **Incorrectly published project:** stop further publication and preserve the
-editorial decision and source evidence. The current application deliberately
-has no general unpublish control. Do not issue an ad-hoc table update. Escalate
-for an authorized, reviewed corrective migration or application change. For
-the specific case of a validated primary-source access restriction, retain the
-existing system-origin safety demotion; do not rewrite or remove its audit
-event. An explicit editor must re-review and deliberately republish after safe
-source recovery.
+editorial decision and source evidence. The application has no general
+unpublish control; do not issue an ad-hoc table update. Escalate for an
+authorized corrective change. If a validated primary source becomes
+restricted, retain the system-origin safety demotion and audit event. A human
+must review current evidence and deliberately republish after source recovery.
 
 ## Acceptance targets
 
-The first live pilot is accepted only when hosted migrations complete, one
-bounded live GitHub ingestion succeeds, at least one real candidate has a
-complete source-to-draft lineage, no critical integrity finding remains, an
-allowlisted administrator completes authenticated review, one real project is
-deliberately published, and anonymous deployed-site search/details verify its
-correct metadata, filters, logo/fallback, and source links. Public RLS,
-unpublished exclusion, publication guards, and source-safety demotion must be
-covered by the local security/integration suite and checked without revealing
-private source data. The checks must pass independently for the hosted app and
-database before declaring the pilot complete.
+The production pilot is accepted only after a bounded live ingestion succeeds,
+at least one real candidate has a complete source-to-draft lineage, no
+critical integrity finding remains, an allowlisted administrator completes
+review, one project is deliberately published, and anonymous deployed-site
+search and details verify its metadata, filters, logo or fallback, and source
+links. Local security and integration checks cover RLS, unpublished exclusion,
+publication guards, and source-safety demotion. Hosted database and website
+checks must pass independently before declaring launch complete.
 
-These are future operator acceptance targets. M1-10 has not run the hosted
-migrations, deployed the website, ingested a real GitHub candidate, performed
-a hosted administrator sign-in, or published a real project.
+At M2-02 completion, the production schema and password administrator access
+are initialized. No live GitHub ingestion, project publication, or Vercel
+deployment has been performed.

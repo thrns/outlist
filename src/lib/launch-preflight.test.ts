@@ -12,6 +12,7 @@ const expectedCategories = [
   "infrastructure", "data-databases", "communication", "self-hosted",
   "security-privacy", "automation-workflows",
 ];
+const productionProjectRef = "hvunezhzpnpdkfiqgaaa";
 
 function localEnvironment(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -19,6 +20,17 @@ function localEnvironment(overrides: Record<string, string | undefined> = {}) {
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "local-publishable-key",
     SUPABASE_SECRET_KEY: "local-secret-key",
     OUTLIST_SUPABASE_ENVIRONMENT: "local",
+    ...overrides,
+  };
+}
+
+function productionEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return {
+    NEXT_PUBLIC_SUPABASE_URL: `https://${productionProjectRef}.supabase.co`,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "production-publishable-key",
+    SUPABASE_SECRET_KEY: "production-secret-key",
+    OUTLIST_SUPABASE_ENVIRONMENT: "production",
+    GITHUB_TOKEN: "production-github-token",
     ...overrides,
   };
 }
@@ -93,9 +105,10 @@ describe("launch preflight", () => {
       inventory: { published_projects: 2, pending_review_project_drafts: 1 },
       running_jobs: [], active_leases: { discovery: 0 }, integrity_findings: [],
     } })) });
-    const report = await buildLaunchPreflightReport({ help: false }, localEnvironment(), adapters, { expectedMigrations });
+    const report = await buildLaunchPreflightReport({ help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef }, productionEnvironment(), adapters, { expectedMigrations });
     expect(report.migrations).toMatchObject({ status: "incomplete", missing: ["20261108140000"] });
     expect(report.blockers.map(({ code }) => code)).toContain("migrations_missing");
+    expect(report.ingestion_ready).toBe(false);
   });
 
   it("blocks a missing or incorrectly configured public logo bucket", async () => {
@@ -105,9 +118,10 @@ describe("launch preflight", () => {
       storage_bucket: { exists: false }, inventory: { published_projects: 2, pending_review_project_drafts: 1 },
       running_jobs: [], active_leases: { discovery: 0 }, integrity_findings: [],
     } })) });
-    const report = await buildLaunchPreflightReport({ help: false }, localEnvironment(), adapters, { expectedMigrations });
+    const report = await buildLaunchPreflightReport({ help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef }, productionEnvironment(), adapters, { expectedMigrations });
     expect(report.storage.status).toBe("incomplete");
     expect(report.blockers.map(({ code }) => code)).toContain("logo_storage_not_ready");
+    expect(report.ingestion_ready).toBe(false);
   });
 
   it("blocks a missing category taxonomy", async () => {
@@ -118,9 +132,10 @@ describe("launch preflight", () => {
       inventory: { published_projects: 2, pending_review_project_drafts: 1 },
       running_jobs: [], active_leases: { discovery: 0 }, integrity_findings: [],
     } })) });
-    const report = await buildLaunchPreflightReport({ help: false }, localEnvironment(), adapters, { expectedMigrations });
+    const report = await buildLaunchPreflightReport({ help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef }, productionEnvironment(), adapters, { expectedMigrations });
     expect(report.categories).toMatchObject({ status: "incomplete", missing: ["analytics"] });
     expect(report.blockers.map(({ code }) => code)).toContain("category_taxonomy_incomplete");
+    expect(report.ingestion_ready).toBe(false);
   });
 
   it("checks anonymous RLS reads against public search totals", async () => {
@@ -139,21 +154,148 @@ describe("launch preflight", () => {
       running_jobs: [], active_leases: { discovery: 0 },
       integrity_findings: [{ code: "restricted_repository_assessed", severity: "critical", affected_count: 1, affected_record_ids: ["private-record-id"] }],
     } })) });
-    const report = await buildLaunchPreflightReport({ help: false }, localEnvironment(), adapters, { expectedMigrations });
+    const report = await buildLaunchPreflightReport({ help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef }, productionEnvironment(), adapters, { expectedMigrations });
     expect(report.integrity.findings).toEqual([{ code: "restricted_repository_assessed", severity: "critical", affected_count: 1 }]);
     expect(report.blockers.map(({ code }) => code)).toContain("integrity_restricted_repository_assessed");
+    expect(report.ingestion_ready).toBe(false);
     expect(JSON.stringify(report)).not.toContain("private-record-id");
   });
 
   it("remains read-only and never invokes ingestion", async () => {
     const adapters = readyAdapters();
-    const report = await buildLaunchPreflightReport({ help: false }, localEnvironment({ GITHUB_TOKEN: "github-token-canary" }), adapters, { expectedMigrations });
+    const report = await buildLaunchPreflightReport({ help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef }, productionEnvironment({ GITHUB_TOKEN: "github-token-canary" }), adapters, { expectedMigrations });
     expect(report.read_only).toBe(true);
     expect(report.mutations_performed).toBe(false);
     expect(report.ingestion_started).toBe(false);
+    expect(report.ingestion_ready).toBe(true);
     expect(adapters.readOperatorReport).toHaveBeenCalledTimes(1);
     expect(adapters.searchAnonymousCatalog).toHaveBeenCalledTimes(1);
     expect(adapters.readGitHubRateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports ingestion ready without a website origin while launch remains blocked", async () => {
+    const adapters = readyAdapters();
+    const report = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(), adapters, { expectedMigrations },
+    );
+
+    expect(report.purpose).toBe("ingestion");
+    expect(report.environment.OUTLIST_PUBLIC_ORIGIN).toMatchObject({ configured: false, required: false });
+    expect(report.ingestion_ready).toBe(true);
+    expect(report.launch_ready).toBe(false);
+    expect(report.ingestion_blockers).toEqual([]);
+    expect(report.launch_only_blockers.map(({ code }) => code)).toContain("hosted_manual_checks_incomplete");
+    expect(report.hosted_verification).toBe("partial");
+    expect(report.exit_code).toBe(0);
+  });
+
+  it("accepts the ingestion CLI purpose and returns success without an origin", async () => {
+    let stdout = "";
+    const exitCode = await runLaunchPreflightCli(
+      ["--purpose", "ingestion", "--confirm-project-ref", productionProjectRef],
+      {
+        environment: productionEnvironment(),
+        adapters: readyAdapters(),
+        expectedMigrations,
+        writeStdout: (line) => { stdout += line; },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      purpose: "ingestion",
+      ingestion_ready: true,
+      launch_ready: false,
+      hosted_verification: "partial",
+      read_only: true,
+      mutations_performed: false,
+      ingestion_started: false,
+    });
+  });
+
+  it("keeps the default launch purpose blocked without the deployed HTTPS origin", async () => {
+    const report = await buildLaunchPreflightReport(
+      { help: false, confirmProjectRef: productionProjectRef },
+      productionEnvironment(), readyAdapters(), { expectedMigrations },
+    );
+
+    expect(report.purpose).toBe("launch");
+    expect(report.ingestion_ready).toBe(true);
+    expect(report.launch_ready).toBe(false);
+    expect(report.blockers.map(({ code }) => code)).toContain("hosted_manual_checks_incomplete");
+    expect(report.hosted_verification).toBe("partial");
+    expect(report.exit_code).toBe(1);
+  });
+
+  it("rejects ingestion checks for a different production project reference", async () => {
+    const adapters = readyAdapters();
+    const wrongRef = "other-production-project";
+    const report = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: wrongRef },
+      productionEnvironment({ NEXT_PUBLIC_SUPABASE_URL: `https://${wrongRef}.supabase.co` }),
+      adapters, { expectedMigrations },
+    );
+
+    expect(report.target.confirmation).toBe("matched");
+    expect(report.ingestion_ready).toBe(false);
+    expect(report.ingestion_blockers.map(({ code }) => code)).toContain("production_project_ref_mismatch");
+    expect(adapters.readOperatorReport).not.toHaveBeenCalled();
+  });
+
+  it("blocks ingestion when GitHub authentication fails or the bounded budget is too low", async () => {
+    const failedApi = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(),
+      readyAdapters({ readGitHubRateLimit: vi.fn(async () => ({ error: new Error("token must stay private") })) }),
+      { expectedMigrations },
+    );
+    const lowBudget = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(),
+      readyAdapters({ readGitHubRateLimit: vi.fn(async () => ({ data: { resources: {
+        core: { limit: 5000, remaining: 30, reset: 1_800_000_000 },
+        search: { limit: 30, remaining: 1, reset: 1_800_000_000 },
+      } } })) }),
+      { expectedMigrations },
+    );
+
+    expect(failedApi.ingestion_ready).toBe(false);
+    expect(failedApi.ingestion_blockers.map(({ code }) => code)).toContain("github_rate_limit_unavailable");
+    expect(lowBudget.ingestion_ready).toBe(false);
+    expect(lowBudget.ingestion_blockers.map(({ code }) => code)).toContain("github_rate_limit_budget_insufficient");
+  });
+
+  it("blocks ingestion on active leases and unavailable or unauthorized administrator settings", async () => {
+    const activeLease = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(),
+      readyAdapters({ readOperatorReport: vi.fn(async () => ({ data: {
+        report_version: "m1-10-v3",
+        schema: { migration_table_available: true, applied_migrations: expectedMigrations, ready: true },
+        categories: { active_count: 11, missing_slugs: [], ready: true },
+        storage_bucket: { exists: true, public: true, file_size_limit: 2_097_152, mime_types: ["image/png", "image/jpeg", "image/webp"] },
+        inventory: { published_projects: 2, pending_review_project_drafts: 1 },
+        running_jobs: [], active_leases: { discovery: 1 }, integrity_findings: [],
+      } })) }),
+      { expectedMigrations },
+    );
+    const unavailableAdmin = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(),
+      readyAdapters({ readAuthSettings: vi.fn(async () => ({ error: true })) }),
+      { expectedMigrations },
+    );
+    const unauthorizedAdmin = await buildLaunchPreflightReport(
+      { help: false, purpose: "ingestion", confirmProjectRef: productionProjectRef },
+      productionEnvironment(),
+      readyAdapters({ countAllowlistedAdmins: vi.fn(async () => ({ count: 0 })) }),
+      { expectedMigrations },
+    );
+
+    expect(activeLease.ingestion_blockers.map(({ code }) => code)).toContain("pipeline_already_active");
+    expect(unavailableAdmin.ingestion_blockers.map(({ code }) => code)).toContain("auth_settings_unavailable");
+    expect(unauthorizedAdmin.ingestion_blockers.map(({ code }) => code)).toContain("admin_allowlist_empty");
   });
 
   it("rejects write flags and does not contact Supabase or GitHub", async () => {

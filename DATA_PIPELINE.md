@@ -11,8 +11,9 @@
   publication workflow.
 - `/submit` is unavailable and does not persist submissions. `/alternatives`
   is unavailable pending approved public relationships.
-- The ingestion pipeline is manually operated. No hosted migration, real
-  hosted ingestion, publication, or deployment has occurred.
+- The production Supabase schema is initialized, and administrator password
+  sign-in works. No live GitHub ingestion, project publication, or Vercel
+  deployment has occurred. Ingestion remains manually operated.
 
 ## Architecture summary
 
@@ -633,8 +634,9 @@ object-read policy checks. Revocation removes the object through the Storage
 API; deleting metadata alone would not delete the object.
 
 Recurring ingestion, public alternatives, and public submissions remain
-unavailable. Hosted migration application, website deployment, live ingestion,
-and publication have not been performed; see the M1-10 launch procedure below.
+unavailable. The production schema and administrator password access are
+initialized; website deployment, live ingestion, and publication have not been
+performed. See the M2-02 launch procedure below.
 
 ## M1-06 end-to-end pilot and operational readiness
 
@@ -855,38 +857,52 @@ and the publication race.
 The browser E2E uses a random local Auth password and edits a real database
 draft. These checks do not run hosted migrations or publish live projects.
 
-## M1-10 production launch preparation
+## M1-10 production launch preparation and M2-02 pre-deployment ingestion
 
-`bun run launch:preflight` is a default read-only check. It reports the
-URL-derived Supabase project reference and environment label, migration
-versions, category seed, logo bucket configuration, anonymous search and RLS
-readiness, administrator allowlist and Auth email settings, pipeline inventory
-and activity, integrity findings, GitHub rate limits when a token is set, and
-published, unpublished, and pending-review counts. Credentials are represented
-only as configured/not configured. It never starts a pipeline worker, writes a
-record, or uploads an object. A hosted target requires an explicit project
-reference confirmation and a verified HTTPS origin. It also checks that public
-signup is disabled and the email provider is enabled for password sign-in.
+`bun run launch:preflight` defaults to launch purpose and remains read-only. It
+reports the URL-derived Supabase project reference and environment label,
+migration versions, category seed, logo bucket configuration, anonymous search
+and RLS readiness, administrator allowlist and Auth email settings, pipeline
+inventory and activity, integrity findings, GitHub rate limits when a token is
+set, and published, unpublished, and pending-review counts. Credentials are
+represented only as configured/not configured. It never starts a pipeline
+worker, writes a record, or uploads an object. Hosted launch readiness requires
+the exact deployed HTTPS origin.
+
+M2-02 adds `--purpose ingestion` for a read-only production readiness check
+that does not require `OUTLIST_PUBLIC_ORIGIN`, a deployed website, or Vercel
+environment. It confirms the approved production project reference and
+environment, migration history and worker schema/grants, public RPC and
+anonymous RLS reads, eleven categories, logo Storage, administrator allowlist,
+email/password availability, disabled signup, authenticated GitHub access with
+the bounded pilot's rate budget, no running jobs or active leases, and no
+critical integrity findings. The report exposes `ingestion_ready`,
+`launch_ready`, `ingestion_blockers`, `launch_only_blockers`, and the selected
+purpose. The command exits successfully only when the selected purpose passes.
+`hosted_verification` remains partial until deployed-site verification occurs.
+Preflight does not authorize or start ingestion; pipeline writes still require
+separate `--execute`, `--allow-hosted-writes`, and matching
+`--confirm-project-ref` flags.
 
 The M1-10 forward migration updates the service-only pipeline report to include
 the full M1-09 and M1-10 migration chain. This fixes the earlier report's stale
 expected-version list, which could mark a clean current database incomplete.
 The migration chain remains the schema, RLS, Storage, taxonomy, and policy
 source of truth. CI creates an empty database from the ordered migrations and
-checks RLS, grants, search, publication, and source-safety behavior. Hosted
-migration history must still be reviewed and applied by a human; production
-migration application is not part of preflight.
+checks RLS, grants, search, publication, and source-safety behavior. The
+production migration chain is initialized. Future migration changes still
+require separate review and operator authorization; migration application is
+not part of preflight.
 
-`LAUNCH_RUNBOOK.md` contains the provider-neutral Bun/Next.js deployment
-settings, explicit migration review/dry-run/apply/check commands, hosted target
-and Auth checks, the bounded live-smoke procedure, stage-specific reporting,
-manual editorial publication, site smoke checks, scale-up gates, and separate
-website and database recovery procedures. The existing pipeline remains
-manually operated. GitHub candidates, enriched repositories, assessments,
-pending drafts, and published projects remain separate counts. No automatic
-license verification, quality verification, or publication was added.
+`LAUNCH_RUNBOOK.md` records the current production state and the sequence from
+hosted readiness through a separately authorized bounded pilot, manual review
+and publication, gradual ingestion, Vercel deployment, and HTTPS launch
+verification. GitHub candidates, enriched repositories, assessments, pending
+drafts, and published projects remain separate counts. No automatic license
+verification, quality verification, or publication was added.
 
-No hosted migration, production deployment, real GitHub import, or live project
-publication has been performed. Alternatives and public submissions remain
-unavailable. Local tests and fixture-backed reports do not establish hosted
-connectivity, Auth settings, catalog contents, or production latency.
+The production schema and administrator password access are initialized. No
+production deployment, real GitHub import, or live project publication has
+been performed. Alternatives and public submissions remain unavailable. Local
+tests and fixture-backed reports do not establish hosted connectivity, current
+Auth settings, catalog contents, or production latency.

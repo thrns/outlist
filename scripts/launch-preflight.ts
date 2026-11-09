@@ -6,6 +6,8 @@ import type { Database } from "../src/lib/supabase/database.types";
 import { GitHubClient } from "../src/lib/github/client";
 
 const MIGRATIONS_DIRECTORY = fileURLToPath(new URL("../supabase/migrations/", import.meta.url));
+const PRODUCTION_PROJECT_REF = "hvunezhzpnpdkfiqgaaa";
+const INGESTION_GITHUB_BUDGET = { core: 31, search: 1 } as const;
 const EXPECTED_CATEGORIES = [
   "developer-tools", "ai-machine-learning", "productivity", "design", "analytics",
   "infrastructure", "data-databases", "communication", "self-hosted",
@@ -36,14 +38,18 @@ export type LaunchPreflightAdapters = {
   readGitHubRateLimit(): Promise<ReadResult>;
 };
 
+export type LaunchPreflightPurpose = "launch" | "ingestion";
+
 export type LaunchPreflightArguments = {
+  purpose?: LaunchPreflightPurpose;
   confirmProjectRef?: string;
   help: boolean;
 };
 
 export type LaunchPreflightReport = {
-  schema: "outlist.launch-preflight.v1";
+  schema: "outlist.launch-preflight.v2";
   generated_at: string;
+  purpose: LaunchPreflightPurpose;
   read_only: true;
   mutations_performed: false;
   ingestion_started: false;
@@ -99,7 +105,10 @@ export type LaunchPreflightReport = {
   pending_review_projects: number | null;
   manual_checks_required: string[];
   blockers: Array<{ code: string; message: string }>;
+  ingestion_blockers: Array<{ code: string; message: string }>;
+  launch_only_blockers: Array<{ code: string; message: string }>;
   warnings: Array<{ code: string; message: string }>;
+  ingestion_ready: boolean;
   launch_ready: boolean;
   hosted_verification: "completed" | "not_performed" | "partial";
   exit_code: 0 | 1;
@@ -109,11 +118,20 @@ const ENVIRONMENT_NAMES = ["local", "development", "staging", "production"] as c
 type EnvironmentName = (typeof ENVIRONMENT_NAMES)[number];
 
 function parseArguments(args: string[]): LaunchPreflightArguments {
+  let purpose: LaunchPreflightPurpose = "launch";
   let confirmProjectRef: string | undefined;
   let help = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") help = true;
+    else if (arg === "--purpose") {
+      const value = args[index + 1];
+      if (value !== "launch" && value !== "ingestion") {
+        throw new TypeError("--purpose must be launch or ingestion.");
+      }
+      purpose = value;
+      index += 1;
+    }
     else if (arg === "--confirm-project-ref") {
       const value = args[index + 1];
       if (!value || value.startsWith("--") || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(value)) {
@@ -125,7 +143,7 @@ function parseArguments(args: string[]): LaunchPreflightArguments {
       throw new TypeError("Unknown launch preflight option. Use --help to see supported options.");
     }
   }
-  return { confirmProjectRef, help };
+  return { purpose, confirmProjectRef, help };
 }
 
 export function classifyLaunchTarget(rawUrl: string | undefined, environmentLabel: string | undefined) {
@@ -224,7 +242,11 @@ export async function buildLaunchPreflightReport(
   options: { expectedMigrations?: string[]; generatedAt?: string } = {},
 ): Promise<LaunchPreflightReport> {
   const blockers: LaunchPreflightReport["blockers"] = [];
+  const ingestionOnlyBlockers: LaunchPreflightReport["blockers"] = [];
+  const launchOnlyBlockers: LaunchPreflightReport["blockers"] = [];
   const warnings: LaunchPreflightReport["warnings"] = [];
+  const purpose = args.purpose ?? "launch";
+  let verificationCompleted = false;
   const requiredEnvironment = Object.fromEntries(REQUIRED_ENVIRONMENT_VARIABLES.map((name) => [name, {
     configured: Boolean(environment[name]?.trim()), required: true,
   }]));
@@ -236,10 +258,11 @@ export async function buildLaunchPreflightReport(
   };
   requiredEnvironment.SUPABASE_SECRET_KEY = { configured: Boolean(environment.SUPABASE_SECRET_KEY?.trim()), required: true };
   requiredEnvironment.OUTLIST_SUPABASE_ENVIRONMENT = { configured: Boolean(environment.OUTLIST_SUPABASE_ENVIRONMENT?.trim()), required: true };
-  requiredEnvironment.GITHUB_TOKEN = { configured: Boolean(environment.GITHUB_TOKEN?.trim()), required: false };
+  requiredEnvironment.GITHUB_TOKEN = { configured: Boolean(environment.GITHUB_TOKEN?.trim()), required: purpose === "ingestion" };
   requiredEnvironment.OUTLIST_PUBLIC_ORIGIN = { configured: Boolean(environment.OUTLIST_PUBLIC_ORIGIN?.trim()), required: false };
 
   const targetInfo = classifyLaunchTarget(environment.NEXT_PUBLIC_SUPABASE_URL, environment.OUTLIST_SUPABASE_ENVIRONMENT);
+  requiredEnvironment.OUTLIST_PUBLIC_ORIGIN = { configured: Boolean(environment.OUTLIST_PUBLIC_ORIGIN?.trim()), required: purpose === "launch" && targetInfo.kind === "hosted" };
   const target: LaunchPreflightReport["target"] = {
     kind: targetInfo.kind,
     host: targetInfo.host,
@@ -257,6 +280,10 @@ export async function buildLaunchPreflightReport(
   if (targetInfo.kind === "unclassified_remote") blockers.push({ code: "remote_project_reference_unverifiable", message: "The configured remote Supabase host does not expose a standard project reference; the launch target cannot be confirmed safely." });
   if (targetInfo.kind === "hosted" && args.confirmProjectRef && target.project_ref !== args.confirmProjectRef) blockers.push({ code: "project_ref_confirmation_mismatch", message: "The supplied project reference does not match the reference derived from NEXT_PUBLIC_SUPABASE_URL." });
   if (targetInfo.kind === "hosted" && !args.confirmProjectRef) blockers.push({ code: "hosted_project_confirmation_required", message: "Review the project reference in Supabase Dashboard, then pass it with --confirm-project-ref to verify the hosted target." });
+  if (targetInfo.kind !== "hosted") ingestionOnlyBlockers.push({ code: "ingestion_requires_hosted_production", message: "Ingestion readiness is only available for the hosted production Supabase project." });
+  else if (targetInfo.environment !== "production") ingestionOnlyBlockers.push({ code: "ingestion_requires_production_environment", message: "Set OUTLIST_SUPABASE_ENVIRONMENT=production before checking production ingestion readiness." });
+  if (targetInfo.kind === "hosted" && targetInfo.projectRef !== PRODUCTION_PROJECT_REF) ingestionOnlyBlockers.push({ code: "production_project_ref_mismatch", message: "The configured Supabase URL does not point to the approved production project reference." });
+  if (!environment.GITHUB_TOKEN?.trim()) ingestionOnlyBlockers.push({ code: "github_token_required_for_ingestion", message: "Configure a server-only GITHUB_TOKEN so the bounded production pilot uses authenticated GitHub API access." });
 
   let urlValid = false;
   try {
@@ -275,8 +302,9 @@ export async function buildLaunchPreflightReport(
   const configuredAdmin = Boolean(environment.NEXT_PUBLIC_SUPABASE_URL?.trim() && environment.SUPABASE_SECRET_KEY?.trim() && urlValid);
   const expectedMigrations = options.expectedMigrations ?? await readExpectedMigrations();
   const report: LaunchPreflightReport = {
-    schema: "outlist.launch-preflight.v1",
+    schema: "outlist.launch-preflight.v2",
     generated_at: options.generatedAt ?? new Date().toISOString(),
+    purpose,
     read_only: true,
     mutations_performed: false,
     ingestion_started: false,
@@ -295,10 +323,32 @@ export async function buildLaunchPreflightReport(
     pending_review_projects: null,
     manual_checks_required: [],
     blockers,
+    ingestion_blockers: [],
+    launch_only_blockers: [],
     warnings,
+    ingestion_ready: false,
     launch_ready: false,
     hosted_verification: targetInfo.kind === "hosted" ? "partial" : "not_performed",
     exit_code: 1,
+  };
+
+  if (targetInfo.kind === "hosted") {
+    const hasHttpsOrigin = isHttpsOrigin(environment.OUTLIST_PUBLIC_ORIGIN);
+    report.manual_checks_required = hasHttpsOrigin ? [] : ["OUTLIST_PUBLIC_ORIGIN must be the deployed HTTPS origin"];
+    if (!hasHttpsOrigin) launchOnlyBlockers.push({ code: "hosted_manual_checks_incomplete", message: "Set and verify the deployed HTTPS origin before declaring the hosted website launch-ready." });
+  }
+
+  const finalizeReport = () => {
+    report.ingestion_blockers = [...blockers, ...ingestionOnlyBlockers];
+    report.launch_only_blockers = [...launchOnlyBlockers];
+    report.ingestion_ready = report.ingestion_blockers.length === 0;
+    report.launch_ready = verificationCompleted && blockers.length === 0 && launchOnlyBlockers.length === 0;
+    report.blockers = purpose === "ingestion"
+      ? report.ingestion_blockers
+      : [...blockers, ...launchOnlyBlockers];
+    report.exit_code = purpose === "ingestion"
+      ? report.ingestion_ready ? 0 : 1
+      : report.launch_ready ? 0 : 1;
   };
 
   const targetSafeToInspect = targetInfo.kind === "local"
@@ -306,10 +356,16 @@ export async function buildLaunchPreflightReport(
     : targetInfo.kind === "hosted" && targetInfo.projectRef !== null
       && target.confirmation === "matched" && targetInfo.labelValid && !targetInfo.remoteLocalMismatch
       && targetInfo.environment !== "unknown";
-  if (!targetSafeToInspect || (!configuredPublic && !configuredAdmin) || !adapters) {
+  const ingestionTargetSafeToInspect = purpose !== "ingestion" || (targetInfo.kind === "hosted"
+    && targetInfo.projectRef === PRODUCTION_PROJECT_REF && targetInfo.environment === "production"
+    && target.confirmation === "matched");
+  if (targetSafeToInspect && (configuredPublic || configuredAdmin) && !adapters) {
+    blockers.push({ code: "preflight_adapters_unavailable", message: "Read-only preflight checks could not be initialized for the configured Supabase target." });
+  }
+  if (!targetSafeToInspect || !ingestionTargetSafeToInspect || (!configuredPublic && !configuredAdmin) || !adapters) {
     if (!configuredPublic && !environment.NEXT_PUBLIC_SUPABASE_URL?.trim()) report.public_catalog.status = "unavailable";
     if (!configuredAdmin && !environment.SUPABASE_SECRET_KEY?.trim()) report.pipeline.status = "unavailable";
-    report.exit_code = 1;
+    finalizeReport();
     return report;
   }
 
@@ -453,7 +509,7 @@ export async function buildLaunchPreflightReport(
       const core = rate.resources?.core ?? rate.rate;
       const search = rate.resources?.search;
       report.github_rate_limit.status = "checked";
-      report.github_rate_limit.authentication = "authenticated";
+      report.github_rate_limit.authentication = tokenConfigured ? "authenticated" : "unauthenticated";
       report.github_rate_limit.core_remaining = safeCount(core?.remaining);
       report.github_rate_limit.core_limit = safeCount(core?.limit);
       report.github_rate_limit.core_resets_at = isoFromUnix(core?.reset);
@@ -461,17 +517,19 @@ export async function buildLaunchPreflightReport(
       report.github_rate_limit.search_limit = safeCount(search?.limit);
       report.github_rate_limit.search_resets_at = isoFromUnix(search?.reset);
       if (report.github_rate_limit.core_remaining === 0 || report.github_rate_limit.search_remaining === 0) warnings.push({ code: "github_rate_limit_exhausted", message: "A GitHub rate-limit resource is exhausted; wait until its reported reset time before ingestion." });
+      const coreRemaining = report.github_rate_limit.core_remaining;
+      const searchRemaining = report.github_rate_limit.search_remaining;
+      if (coreRemaining === null || searchRemaining === null) {
+        ingestionOnlyBlockers.push({ code: "github_rate_limit_budget_unavailable", message: "GitHub did not return usable core and search budget values for the bounded pilot." });
+      } else if (coreRemaining < INGESTION_GITHUB_BUDGET.core || searchRemaining < INGESTION_GITHUB_BUDGET.search) {
+        ingestionOnlyBlockers.push({ code: "github_rate_limit_budget_insufficient", message: `The bounded pilot requires at least ${INGESTION_GITHUB_BUDGET.core} core and ${INGESTION_GITHUB_BUDGET.search} search requests in the current GitHub budget.` });
+      }
     }
   } else {
     warnings.push({ code: "github_token_not_configured", message: "No server-only GITHUB_TOKEN is configured; public GitHub access has a smaller unauthenticated rate budget." });
   }
 
   if (targetInfo.kind === "hosted") {
-    const manualChecks: Array<[string, boolean]> = [
-      ["OUTLIST_PUBLIC_ORIGIN must be the deployed HTTPS origin", isHttpsOrigin(environment.OUTLIST_PUBLIC_ORIGIN)],
-    ];
-    report.manual_checks_required = manualChecks.filter(([, completed]) => !completed).map(([description]) => description);
-    if (report.manual_checks_required.length) blockers.push({ code: "hosted_manual_checks_incomplete", message: "Set and verify the deployed HTTPS origin before beginning the hosted pilot." });
     report.hosted_verification = "partial";
   } else if (targetInfo.kind === "local") {
     report.hosted_verification = "not_performed";
@@ -482,8 +540,8 @@ export async function buildLaunchPreflightReport(
     && report.storage.status === "ready" && report.integrity.status !== "unavailable"
     && report.pipeline.running_jobs === 0 && report.pipeline.active_leases === 0 ? "ready" : "blocked";
   if (report.integrity.status === "unavailable") blockers.push({ code: "integrity_audit_unavailable", message: "The outstanding integrity findings could not be inspected." });
-  report.launch_ready = blockers.length === 0;
-  report.exit_code = report.launch_ready ? 0 : 1;
+  verificationCompleted = true;
+  finalizeReport();
   return report;
 }
 
@@ -543,7 +601,7 @@ export async function runLaunchPreflightCli(
     return 2;
   }
   if (parsed.help) {
-    stdout("Usage: bun run launch:preflight [--confirm-project-ref <ref>]\nThis command is read-only. It never starts ingestion or changes database or Storage records.\n");
+    stdout("Usage: bun run launch:preflight [--purpose launch|ingestion] [--confirm-project-ref <ref>]\nThe default purpose is launch. Ingestion purpose checks production ingestion readiness without requiring a deployed website.\nThis command is read-only. It never starts ingestion or changes database or Storage records.\n");
     return 0;
   }
   const environment = injected?.environment ?? process.env;
@@ -556,7 +614,13 @@ export async function runLaunchPreflightCli(
       adapters = createRuntimeAdapters(environment);
     } catch {
       const report = await buildLaunchPreflightReport(parsed, environment, undefined, { expectedMigrations: injected?.expectedMigrations });
-      report.blockers.push({ code: "preflight_adapter_configuration_invalid", message: "Supabase client configuration could not be initialized; check the configured URL and credential format." });
+      const adapterBlocker = { code: "preflight_adapter_configuration_invalid", message: "Supabase client configuration could not be initialized; check the configured URL and credential format." };
+      report.ingestion_blockers.push(adapterBlocker);
+      report.blockers = parsed.purpose === "ingestion"
+        ? report.ingestion_blockers
+        : [...report.blockers, adapterBlocker];
+      report.ingestion_ready = false;
+      report.launch_ready = false;
       report.exit_code = 1;
       stdout(`${JSON.stringify(report, null, 2)}\n`);
       return 1;
