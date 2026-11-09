@@ -4,6 +4,25 @@ import { GitHubApiError } from "../src/lib/github/errors";
 import type { GitHubSearchRepository } from "../src/lib/github/types";
 import { getDiscoveryPlan } from "../src/lib/discovery/plans";
 
+function searchRepository(id: number): GitHubSearchRepository {
+  return {
+    id,
+    owner: { login: "fixture-owner" },
+    name: `repo-${id}`,
+    fullName: `fixture-owner/repo-${id}`,
+    canonicalUrl: `https://github.com/fixture-owner/repo-${id}`,
+    description: { state: "absent" },
+    primaryLanguage: { state: "absent" },
+    starCount: 10,
+    forkCount: 1,
+    createdAt: "2025-01-01T00:00:00Z",
+    updatedAt: "2026-11-01T00:00:00Z",
+    pushedAt: { state: "absent" },
+    topics: { state: "absent" },
+    license: { state: "absent" },
+  } as GitHubSearchRepository;
+}
+
 describe("discovery CLI safety", () => {
   it("defaults to a read-only bounded plan and requires explicit execution", () => {
     expect(parseDiscoveryArguments(["--plan", "initial"])).toMatchObject({ mode: "dry-run", maxQueries: 2, maxPages: 2, maxCandidates: 200 });
@@ -82,7 +101,64 @@ describe("discovery CLI safety", () => {
     }
   });
 
-  it("releases an oversized page without advancing the checkpoint past its candidate budget", async () => {
+  it("commits a full 100-result search page when the candidate budget is page-aligned", async () => {
+    const stdout: string[] = [];
+    const claim = {
+      id: "query-page-aligned",
+      partition_key: "page-aligned-query",
+      query_text: "topic:fixture is:public",
+      query_parameters: { sort: "stars", order: "desc", per_page: 100 },
+      query_fingerprint: "page-aligned-fingerprint",
+      cursor: null,
+      total_count: null,
+      incomplete_results: false,
+      lease_token: "00000000-0000-0000-0000-000000000003",
+    };
+    const rpc = vi.fn(async (name: string, _args?: Record<string, unknown>) => {
+      void _args;
+      if (name === "start_discovery_job") return { data: "job-page-aligned", error: null };
+      if (name === "claim_discovery_partitions") return { data: [claim], error: null };
+      if (name === "commit_discovery_page") return { data: { committed: true, status: "completed", candidates_created: 100 }, error: null };
+      return { data: null, error: null };
+    });
+    const database = {
+      rpc,
+      from: () => ({
+        select: () => ({
+          eq: () => Promise.resolve({ data: [{ status: "completed" }], error: null }),
+        }),
+      }),
+    } as unknown as NonNullable<DiscoveryCliDependencies["supabase"]>;
+    const github = {
+      searchRepositories: vi.fn(async () => ({
+        data: { items: Array.from({ length: 100 }, (_, index) => searchRepository(index + 1)), totalCount: 100, incompleteResults: false },
+        provenance: {
+          fetchedAt: "2026-11-05T12:00:00.000Z",
+          sourceApiUrl: "https://api.github.com/search/repositories?q=topic%3Afixture&page=1&per_page=100",
+          httpStatus: 200,
+          apiVersion: "2022-11-28",
+          resourceType: "repository_search",
+          stableResourceIdentity: "github:repository-search:fixture",
+        },
+      })),
+    } as unknown as NonNullable<DiscoveryCliDependencies["github"]>;
+    const status = await runDiscoveryCli(["--execute", "--max-queries", "1", "--max-pages", "1", "--max-candidates", "100"], {
+      supabase: database,
+      github,
+      writeStdout: (text) => stdout.push(text),
+    });
+    const events = stdout.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const commitCall = rpc.mock.calls.find(([name]) => name === "commit_discovery_page");
+    expect(status).toBe(0);
+    expect(commitCall?.[1]).toMatchObject({ p_per_page: 100, p_next_state: "exhausted" });
+    expect((commitCall?.[1] as Record<string, unknown>).p_candidates).toHaveLength(100);
+    expect(events.find((event) => event.event === "page_committed")).toMatchObject({ page_candidates: 100, candidates_created: 100 });
+    expect(events.find((event) => event.event === "discovery_summary")).toMatchObject({
+      pages_committed: 1, candidates_seen: 100, budget_limited: false,
+    });
+  });
+
+  it("releases an oversized page, preserves its cursor, and reports an actionable budget-limited partial outcome", async () => {
     const stdout: string[] = [];
     const stderr: string[] = [];
     const claim = {
@@ -112,27 +188,37 @@ describe("discovery CLI safety", () => {
     const github = {
       searchRepositories: vi.fn(async () => ({
         data: {
-          items: [{ id: 41, isPrivate: false }, { id: 42, isPrivate: false }],
-          totalCount: 2,
+          items: Array.from({ length: 100 }, (_, index) => ({ id: index + 41, isPrivate: false })),
+          totalCount: 100,
           incompleteResults: false,
         },
         provenance: {},
       })),
     } as unknown as NonNullable<DiscoveryCliDependencies["github"]>;
-    const status = await runDiscoveryCli(["--execute", "--max-queries", "1", "--max-pages", "1", "--max-candidates", "1"], {
+    const status = await runDiscoveryCli(["--execute", "--max-queries", "1", "--max-pages", "1", "--max-candidates", "10"], {
       supabase: database,
       github,
       writeStdout: (text) => stdout.push(text),
       writeStderr: (text) => stderr.push(text),
     });
-    expect(status).toBe(0);
+    expect(status).toBe(1);
     expect(rpc).toHaveBeenCalledWith("release_discovery_partition", expect.any(Object));
     expect(rpc).not.toHaveBeenCalledWith("commit_discovery_page", expect.any(Object));
     const summary = stdout.map((line) => line.trim()).filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>)
       .find((event) => event.event === "discovery_summary");
-    expect(summary).toMatchObject({ pages_committed: 0, candidates_seen: 0 });
+    expect(summary).toMatchObject({
+      status: "partial", pages_committed: 0, candidates_seen: 0, budget_limited: true,
+      budget_diagnostic: {
+        code: "candidate_budget_below_fetched_page", page: 1, fetched_items: 100,
+        unique_public_candidates: 100, remaining_candidate_budget: 10, checkpoint_preserved: true,
+        retry_page: 1, recommended_max_candidates: 100,
+      },
+    });
     expect(stdout.join("")).not.toContain("page_committed");
     expect(stderr).toEqual([]);
+    expect(rpc).toHaveBeenCalledWith("finish_discovery_job", expect.objectContaining({
+      p_job_id: "job-budget", p_status: "partial", p_error_summary: expect.stringContaining("Increase --max-candidates to 100"),
+    }));
   });
 
   it("does not report candidate counts when the page commit fails", async () => {

@@ -8,23 +8,24 @@ import { runDiscoveryCli } from "./discover";
 import { runEnrichmentCli } from "./enrich";
 import { runAssessmentCli } from "./assess";
 import { runLogoCli } from "./logos";
+import { SEARCH_PAGE_SIZE } from "../src/lib/discovery/plans";
 
 const USAGE = `Usage:
-  bun run pipeline -- [--dry-run] [--max-queries 1] [--max-pages 1] [--max-candidates 10]
-  bun run pipeline -- --execute [--max-queries 1] [--max-pages 1] [--max-candidates 10]
-  bun run pipeline -- --resume --execute [--max-candidates 10]
+  bun run pipeline -- [--dry-run] [--max-queries 1] [--max-pages 1] [--max-candidates ${SEARCH_PAGE_SIZE}]
+  bun run pipeline -- --execute [--max-queries 1] [--max-pages 1] [--max-candidates ${SEARCH_PAGE_SIZE}]
+  bun run pipeline -- --resume --execute [--max-candidates ${SEARCH_PAGE_SIZE}]
   bun run pipeline -- --status
   bun run pipeline -- --audit
   bun run pipeline -- --live-smoke --execute
 
 Writes require --execute. Remote Supabase writes require both --allow-hosted-writes
 and --confirm-project-ref <ref>. Live smoke is capped at 1 query, 1 page,
-10 discovered candidates, 5 enrichments, 5 assessments, and 5 logo projects.`;
+${SEARCH_PAGE_SIZE} discovered candidates, 5 enrichments, 5 assessments, and 5 logo projects.`;
 
 const LIMITS = {
   queries: 20,
   pages: 10,
-  candidates: 50,
+  candidates: SEARCH_PAGE_SIZE,
   enrichments: 25,
   assessments: 25,
   logoProjects: 25,
@@ -119,7 +120,7 @@ export function parsePipelineArguments(args: string[]): PipelineArguments {
   let liveSmoke = false;
   let maxQueries = 1;
   let maxPages = 1;
-  let maxCandidates = 10;
+  let maxCandidates: number = SEARCH_PAGE_SIZE;
   let maxEnrichments = 5;
   let maxAssessments = 5;
   let maxLogoProjects = 5;
@@ -174,8 +175,8 @@ export function parsePipelineArguments(args: string[]): PipelineArguments {
   const mode: Mode = selectedMode ?? "dry-run";
   if (resume && mode !== "execute") throw new TypeError("--resume requires --execute.");
   if (liveSmoke && mode !== "execute") throw new TypeError("--live-smoke requires --execute.");
-  if (liveSmoke && (maxQueries > 1 || maxPages > 1 || maxCandidates > 10 || maxEnrichments > 5 || maxAssessments > 5 || maxLogoProjects > 5)) {
-    throw new TypeError("Live smoke budgets cannot exceed 1 query, 1 page, 10 candidates, 5 enrichments, 5 assessments, or 5 logo projects.");
+  if (liveSmoke && (maxQueries > 1 || maxPages > 1 || maxCandidates > SEARCH_PAGE_SIZE || maxEnrichments > 5 || maxAssessments > 5 || maxLogoProjects > 5)) {
+    throw new TypeError(`Live smoke budgets cannot exceed 1 query, 1 page, ${SEARCH_PAGE_SIZE} candidates, 5 enrichments, 5 assessments, or 5 logo projects.`);
   }
   if (allowHostedWrites !== Boolean(confirmProjectRef)) {
     throw new TypeError("Remote writes require both --allow-hosted-writes and --confirm-project-ref.");
@@ -257,6 +258,12 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
   }
 
   const writeRequested = parsed.mode === "execute";
+  if (writeRequested && (parsed.liveSmoke || target.kind === "hosted") && parsed.maxCandidates < SEARCH_PAGE_SIZE) {
+    blockers.push({
+      code: "discovery_candidate_budget_below_page_size",
+      message: `The approved discovery plan fetches ${SEARCH_PAGE_SIZE} results per page. Set --max-candidates to at least ${SEARCH_PAGE_SIZE} before starting a ${target.kind === "hosted" ? "hosted write" : "live-smoke pilot"}.`,
+    });
+  }
   if (writeRequested && target.kind !== "local") {
     if (target.kind === "remote_unknown") {
       blockers.push({ code: "remote_target_unverifiable", message: "This remote Supabase host does not expose a verifiable project reference. Writes are blocked for custom or unclassified hosts." });
@@ -425,6 +432,12 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
     if (entry.name === "discovery" && stageReport?.checkpoints?.[0]) {
       result.last_durable_checkpoint = stageReport.checkpoints[0];
     }
+    if (result.error_events.some((event) => event.event === "candidate_budget_limited")) {
+      warnings.push({
+        code: "discovery_candidate_budget_limited",
+        message: "Discovery fetched a page larger than the remaining candidate budget. The page was not committed and the checkpoint was preserved; rerun with a page-aligned candidate budget.",
+      });
+    }
     previousInventory = currentInventory;
     stageResults.push(result);
     if (parsed.mode === "execute" && dependencies.interruptAfterStage === entry.name) {
@@ -435,7 +448,8 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
       break;
     }
     const rateLimited = isRateLimitOutcome(events, errorEvents);
-    if (result.status === "failed" || rateLimited) {
+    const budgetLimited = result.error_events.some((event) => event.event === "candidate_budget_limited");
+    if (result.status === "failed" || rateLimited || budgetLimited) {
       if (rateLimited) {
         const retry = filterRetrySchedule(stageReport?.retry_schedule, entry.name, events, errorEvents);
         result.last_durable_checkpoint = {
@@ -482,12 +496,12 @@ export async function runPipelineCli(args: string[], dependencies: PipelineCliDe
       liveSmokeValidation = { inspected: false, success: false, diagnostic: "verification_unavailable" };
       if (overallStatus === "complete") overallStatus = "partial";
     } else {
+      const smokeResult = classifyLiveSmokeResult(lineageValidation, stageResults);
       liveSmokeValidation = {
         ...lineageValidation,
-        success: lineageValidation?.success === true
-          && !stageResults.some((stage) => ["failed", "partial", "skipped"].includes(stage.status)),
+        success: smokeResult.success,
       };
-      if (liveSmokeValidation.success !== true && overallStatus === "complete") overallStatus = "partial";
+      if (smokeResult.runStatus === "partial") overallStatus = "partial";
     }
   }
   const newlyCommittedRecordCount = stageResults.reduce((total, stage) => total + (stage.persisted_record_count ?? 0), 0);
@@ -673,7 +687,7 @@ function parseEvents(chunks: string[]): Record<string, unknown>[] {
   });
 }
 
-function summarizeStage(stage: StageName, events: Record<string, unknown>[], errors: Record<string, unknown>[], mode: Mode, exitCode: number, durationMs: number): StageResult {
+export function summarizeStage(stage: StageName, events: Record<string, unknown>[], errors: Record<string, unknown>[], mode: Mode, exitCode: number, durationMs: number): StageResult {
   const eventOf = (event: string) => events.find((item) => item.event === event);
   const summaries = {
     discovery: eventOf("discovery_summary"),
@@ -712,7 +726,12 @@ function summarizeStage(stage: StageName, events: Record<string, unknown>[], err
     deduplicated = Math.max(0, numberField(summary, "registration_attempts") - committed);
   }
   const fatal = errors.some((item) => item.event === "failure" || item.event === "pipeline_failure");
-  const status = mode === "dry-run" ? "planned" : fatal ? "failed" : exitCode !== 0 ? "partial" : "complete";
+  const budgetLimited = stage === "discovery" && summary.budget_limited === true;
+  const budgetDiagnostic = isRecord(summary.budget_diagnostic) ? summary.budget_diagnostic : null;
+  const stageErrors = budgetLimited
+    ? [...errors, { event: "candidate_budget_limited", ...(budgetDiagnostic ?? {}) }]
+    : errors;
+  const status = mode === "dry-run" ? "planned" : fatal ? "failed" : exitCode !== 0 || budgetLimited ? "partial" : "complete";
   const jobIds = events.filter((item) => item.event === "job_started" && typeof item.job_id === "string").map((item) => String(item.job_id));
   const checkpoint = stage === "discovery" ? {
     queries_claimed: numberField(summary, "queries_claimed"),
@@ -725,7 +744,7 @@ function summarizeStage(stage: StageName, events: Record<string, unknown>[], err
     permanent_or_review_failures: permanent, worker_reported_committed: committed, persisted_record_count: null,
     persisted_record_ids: [], reused_record_count: 0, reused_record_ids: [],
     persisted_record_deltas: {}, job_ids: jobIds,
-    events, error_events: errors, last_durable_checkpoint: checkpoint,
+    events, error_events: stageErrors, last_durable_checkpoint: checkpoint,
   };
 }
 
@@ -814,6 +833,15 @@ export function summarizePersistedSmoke(raw: Record<string, unknown>): Record<st
     success: matchingLineage !== null && Object.values(checks).every(Boolean),
     publication_or_approval_performed: false,
   };
+}
+
+export function classifyLiveSmokeResult(
+  lineageValidation: Record<string, unknown> | null,
+  stages: Pick<StageResult, "status">[],
+): { success: boolean; runStatus: "complete" | "partial" } {
+  const success = lineageValidation?.success === true
+    && !stages.some((stage) => ["failed", "partial", "skipped"].includes(stage.status));
+  return { success, runStatus: success ? "complete" : "partial" };
 }
 
 function determineRunStatus(

@@ -169,8 +169,10 @@ or partially committed partition at page one. Query definitions and their
 fingerprints remain stable when execution limits change. `--max-candidates`
 is a run budget, not a page-size setting: if a fetched page exceeds the
 remaining budget, the worker releases the lease without committing or moving
-the cursor, so no search results are skipped. The registered page size stays
-at 100 for the initial plan. A genuinely changed query or page size in the same
+the cursor, so no search results are skipped. It reports
+`candidate_budget_limited`, marks the discovery job partial, exits nonzero,
+and recommends a page-aligned budget. The registered page size stays at 100
+for the initial plan. A genuinely changed query or page size in the same
 plan version is rejected with the partition name and preserves its checkpoint.
 An intentional incompatible definition requires a new plan version, which
 resets that partition's checkpoint only after any live lease ends, or an
@@ -659,13 +661,13 @@ export OUTLIST_SUPABASE_ENVIRONMENT=local
 bun run pipeline -- --status
 bun run pipeline -- --audit
 bun run pipeline -- --dry-run
-bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 10
-bun run pipeline -- --resume --execute --max-candidates 10
+bun run pipeline -- --execute --max-queries 1 --max-pages 1 --max-candidates 100
+bun run pipeline -- --resume --execute --max-candidates 100
 bun run pipeline -- --status
 bun run pipeline -- --audit
 ```
 
-Writes require `--execute`. Defaults are one query, one page, ten discovered
+Writes require `--execute`. Defaults are one query, one page, up to 100 discovered
 candidates, five enrichments, five assessments, and five logo projects, with
 hard ceilings for every stage. Resume continues existing durable queue state.
 Reports distinguish `execution_status` (whether workers finished), `data_status`
@@ -697,10 +699,13 @@ operator to explicitly request writes:
 bun run pipeline -- --live-smoke --execute
 ```
 
-It is capped at one discovery partition/page, ten candidates, five
-enrichments, five assessments, and five logo projects. These are ceilings, not
-minimums. The run does not call a GitHub write endpoint, approve a license,
-verify quality, approve a logo, or publish a project. A service-only SQL
+It is capped at one discovery partition/page, 100 candidates, five
+enrichments, five assessments, and five logo projects. The candidate limit is
+page-aligned with the approved plan's 100-result GitHub Search page. Only five
+repositories can be enriched and assessed in this pilot. A discovered
+candidate is a private queue record; it is not a published project. The run
+does not call a GitHub write endpoint, approve a license, verify quality,
+approve a logo, or publish a project. A service-only SQL
 inspection returns one joined candidate, canonical repository, assessment,
 draft, and pending-logo lineage with their IDs and evidence. It verifies
 stable provider identity, public eligibility, validated source provenance,
@@ -709,6 +714,40 @@ pipeline approvals. Stage rows from different repositories cannot combine into
 success. Resume may reuse earlier validated rows and labels their stage
 origins. Fixture-backed integration is always labeled as fixture data and
 cannot satisfy `--live-smoke`.
+
+### M2-03 first hosted pilot budget and prior empty run
+
+The approved `initial-v1` discovery plan still uses 100 results per page. The
+pipeline candidate ceiling and default now match that page size, so the first
+hosted live-smoke pilot can commit one complete search page, up to 100
+candidates, with one query and one page. Enrichment, assessment, and logo
+candidate work each remain capped at five. This change does not alter the ten
+registered partition keys, query fingerprints, plan version, or durable
+checkpoints.
+
+The prior run `0fb02e01-1f76-4d5f-a0d6-14b1398e9552` made an authenticated
+GitHub API request without an HTTP failure, but its ten-candidate budget could
+not hold a fetched 100-result page. Discovery released the claimed partition
+without committing a page or advancing its cursor. That left zero candidates,
+zero source lineage, and a partial discovery job while all ten registered
+partitions remained pending. No enrichment, assessment, draft, or publication
+followed. Keep that historical job record as-is; it is an accurate record of
+the empty run.
+
+For a future run, an undersized hosted or live-smoke budget is rejected during
+preflight before an ingestion job is created. If a non-hosted execution still
+fetches more unique public candidates than its remaining budget, it releases
+the lease, preserves the current page checkpoint, reports a budget-limited
+partial outcome, and exits nonzero. It does not record a source page or
+candidate lineage until that page commits transactionally. Rerun with
+`--max-candidates 100`; checkpoints are reused by exact fingerprint and no
+partition reset or automatic retry is needed.
+
+For live smoke, a zero exit code alone is not acceptance. Require
+`data_ingestion_success: true` and a persisted, validated candidate-to-draft
+lineage. Newly discovered candidates remain private review-queue inputs; the
+pipeline does not create published catalog projects or automatically approve
+anything.
 
 The audit compares candidate and canonical repository provider plus stable
 numeric provider ID, so a historical candidate name remains valid after a

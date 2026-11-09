@@ -221,6 +221,7 @@ export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCli
   let failures = 0;
   let retriesScheduled = 0;
   let needsReview = 0;
+  let budgetDiagnostic: Record<string, unknown> | null = null;
   let interrupted = false;
   let stopAfterGitHubBlock = false;
   const invoke = async (name: string, rpcArgs: Record<string, unknown>) => {
@@ -322,6 +323,20 @@ export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCli
             p_worker_id: workerId,
             p_lease_token: partition.lease_token,
           });
+          budgetDiagnostic = {
+            code: "candidate_budget_below_fetched_page",
+            partition_key: partition.partition_key,
+            page,
+            fetched_items: searchResult.data.items.length,
+            unique_public_candidates: uniqueRepositories.length,
+            remaining_candidate_budget: remainingCandidateBudget,
+            page_size: pageSize,
+            checkpoint_preserved: true,
+            retry_page: page,
+            recommended_max_candidates: pageSize,
+            action: `Rerun with --max-candidates ${pageSize}; this partition remains pending at page ${page}.`,
+          };
+          stdout(`${JSON.stringify({ event: "candidate_budget_limited", ...budgetDiagnostic })}\n`);
           releasedAtCandidateLimit = true;
           partitionSettled = true;
           break;
@@ -418,12 +433,14 @@ export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCli
     const statuses = partitionStates.data.map((row) => row.status as string);
     const complete = statuses.length > 0 && statuses.every((status) => status === "completed");
     const allTerminal = statuses.length > 0 && statuses.every((status) => ["completed", "failed", "needs_review"].includes(status));
-    const jobStatus = interrupted ? "cancelled" : complete ? "succeeded" : allTerminal && failures > 0 && pagesCommitted === 0 ? "failed" : "partial";
+    const jobStatus = interrupted ? "cancelled" : budgetDiagnostic ? "partial" : complete ? "succeeded" : allTerminal && failures > 0 && pagesCommitted === 0 ? "failed" : "partial";
     stage = "job_finish";
     await invoke("finish_discovery_job", {
       p_job_id: jobId,
       p_status: jobStatus,
-      p_error_summary: failures ? `${failures} terminal partition failure(s); ${retriesScheduled} retry(s) scheduled.` : null,
+      p_error_summary: budgetDiagnostic
+        ? `Candidate budget ${budgetDiagnostic.remaining_candidate_budget} cannot commit page ${budgetDiagnostic.page} with ${budgetDiagnostic.unique_public_candidates} unique public candidates; checkpoint preserved. Increase --max-candidates to ${budgetDiagnostic.recommended_max_candidates} and rerun.`
+        : failures ? `${failures} terminal partition failure(s); ${retriesScheduled} retry(s) scheduled.` : null,
     });
     stdout(`${JSON.stringify({
       event: "discovery_summary",
@@ -435,9 +452,11 @@ export async function runDiscoveryCli(args: string[], dependencies: DiscoveryCli
       retries_scheduled: retriesScheduled,
       failed_partitions: failures,
       partitions_needing_review: needsReview,
+      budget_limited: budgetDiagnostic !== null,
+      budget_diagnostic: budgetDiagnostic,
       interrupted,
     })}\n`);
-    return interrupted ? 130 : failures > 0 ? 1 : 0;
+    return interrupted ? 130 : failures > 0 || budgetDiagnostic ? 1 : 0;
   } catch (error) {
     const failure = error instanceof DiscoveryOperationalError
       ? { stage: error.stage, message: error.message }

@@ -36,14 +36,14 @@ async function rpc<T>(client: RpcClient, name: string, args: Record<string, unkn
   return result.data as T;
 }
 
-function partition(key: string) {
+function partition(key: string, perPage = 1) {
   const query = `topic:outlist-m1-02-${key.slice(0, 8)} is:public fork:false`;
   return {
     partition_key: key,
     provider: "github",
     query_text: query,
     query_fingerprint: `integration-${key}`,
-    query_parameters: { sort: "stars", order: "desc", per_page: 1 },
+    query_parameters: { sort: "stars", order: "desc", per_page: perPage },
     date_range: {},
     intended_coverage: "Disposable local discovery queue integration test.",
   };
@@ -173,6 +173,86 @@ async function main() {
   const providerId = `8810${marker.replaceAll("-", "").slice(0, 12)}`;
   const registrationProviderId = `7710${marker.replaceAll("-", "").slice(0, 12)}`;
   const keys = [`it-${marker}-a`, `it-${marker}-b`, `it-${marker}-c`];
+
+  const pageAlignedPartition = partition(`it-${marker}-page-aligned`, 100);
+  const pageAlignedJob = await rpc<string>(rpcClient, "start_discovery_job", {
+    p_plan_name: "local-page-aligned-integration", p_plan_version: marker, p_partitions: [pageAlignedPartition],
+  });
+  const pageAlignedClaim = (await rpc<Claim[]>(rpcClient, "claim_discovery_partitions", {
+    p_job_id: pageAlignedJob, p_worker_id: "page-aligned-worker-a", p_limit: 1, p_lease_seconds: 180,
+  }))[0];
+  assert(pageAlignedClaim, "The page-aligned local fixture must be claimable.");
+  await rpc<void>(rpcClient, "release_discovery_partition", {
+    p_query_id: pageAlignedClaim.id, p_worker_id: "page-aligned-worker-a", p_lease_token: pageAlignedClaim.lease_token,
+  });
+  const releasedCheckpoint = await admin.from("discovery_queries")
+    .select("status,cursor,pages_fetched,candidates_found,lease_token")
+    .eq("id", pageAlignedClaim.id).single();
+  assert(!releasedCheckpoint.error && releasedCheckpoint.data.status === "pending"
+    && releasedCheckpoint.data.cursor === null && releasedCheckpoint.data.pages_fetched === 0
+    && releasedCheckpoint.data.candidates_found === 0 && releasedCheckpoint.data.lease_token === null,
+  "Releasing a page that exceeded its candidate budget must keep the checkpoint unchanged and clear only the lease.");
+  const retryClaim = (await rpc<Claim[]>(rpcClient, "claim_discovery_partitions", {
+    p_job_id: pageAlignedJob, p_worker_id: "page-aligned-worker-b", p_limit: 1, p_lease_seconds: 180,
+  }))[0];
+  assert(retryClaim?.cursor === null, "A safe retry after release must return to the same first-page checkpoint.");
+  const pageAlignedCandidates = Array.from({ length: 100 }, (_, index) => {
+    const digits = marker.replace(/\D/g, "").padEnd(12, "0").slice(0, 12);
+    const providerRepositoryId = `8${digits}${String(index).padStart(3, "0")}`;
+    return candidate(`page-aligned-fixture/repo-${index}`, 100 + index, providerRepositoryId);
+  });
+  const pageAlignedUrl = new URL("https://api.github.com/search/repositories");
+  pageAlignedUrl.searchParams.set("q", retryClaim.query_text);
+  pageAlignedUrl.searchParams.set("per_page", "100");
+  pageAlignedUrl.searchParams.set("page", "1");
+  pageAlignedUrl.searchParams.set("sort", "stars");
+  pageAlignedUrl.searchParams.set("order", "desc");
+  const pageAlignedCommitArgs = {
+    p_query_id: retryClaim.id,
+    p_worker_id: "page-aligned-worker-b",
+    p_lease_token: retryClaim.lease_token,
+    p_query_fingerprint: retryClaim.query_fingerprint,
+    p_page: 1,
+    p_fetched_at: new Date().toISOString(),
+    p_source_url: pageAlignedUrl.href,
+    p_http_status: 200,
+    p_source_metadata: { api_version: "2022-11-28", resource_type: "repository_search", page: 1, per_page: 100 },
+    p_total_count: 100,
+    p_incomplete_results: false,
+    p_per_page: 100,
+    p_candidates: pageAlignedCandidates,
+    p_next_state: "exhausted",
+    p_children: [],
+    p_lease_seconds: 180,
+  };
+  const pageAlignedCommit = await rpc<Record<string, unknown>>(rpcClient, "commit_discovery_page", pageAlignedCommitArgs);
+  assert(pageAlignedCommit.committed === true && pageAlignedCommit.candidates_created === 100,
+    "The local PostgreSQL page transaction must persist all 100 candidates with their source page.");
+  const pageAlignedReplay = await rpc<Record<string, unknown>>(rpcClient, "commit_discovery_page", pageAlignedCommitArgs);
+  assert(pageAlignedReplay.committed === false && pageAlignedReplay.reason === "already_committed",
+    "Replaying the committed 100-result page must be idempotent.");
+  const pageAlignedIds = pageAlignedCandidates.map((item) => item.provider_repository_id);
+  const pageAlignedRows = await admin.from("repository_candidates").select("id,provider_repository_id")
+    .eq("provider", "github").in("provider_repository_id", pageAlignedIds);
+  assert(!pageAlignedRows.error && pageAlignedRows.data.length === 100
+    && new Set(pageAlignedRows.data.map((row) => row.provider_repository_id)).size === 100,
+  "The real local database must retain exactly 100 distinct candidates after a safe page replay.");
+  const pageAlignedSources = await admin.from("repository_candidate_sources").select("candidate_id,source_record_id")
+    .in("candidate_id", pageAlignedRows.data.map((row) => row.id));
+  assert(!pageAlignedSources.error && pageAlignedSources.data.length === 100
+    && new Set(pageAlignedSources.data.map((row) => row.source_record_id)).size === 1,
+  "Every persisted candidate must link to the same committed page provenance record, with no duplicate links after replay.");
+  const pageAlignedCheckpoint = await admin.from("discovery_queries")
+    .select("status,cursor,pages_fetched,candidates_found")
+    .eq("id", retryClaim.id).single();
+  assert(!pageAlignedCheckpoint.error && pageAlignedCheckpoint.data.status === "completed"
+    && pageAlignedCheckpoint.data.pages_fetched === 1 && pageAlignedCheckpoint.data.candidates_found === 100
+    && (pageAlignedCheckpoint.data.cursor as { next_page?: number }).next_page === 2,
+  "The page cursor and durable counters must advance together only after the full transaction commits.");
+  await rpc<void>(rpcClient, "finish_discovery_job", {
+    p_job_id: pageAlignedJob, p_status: "succeeded", p_error_summary: null,
+  });
+
   const registrationPlan = partition(`it-${marker}-registration`);
   const registrationJobA = await rpc<string>(rpcClient, "start_discovery_job", {
     p_plan_name: "local-registration-integration",

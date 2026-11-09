@@ -90,20 +90,42 @@ ingested.
 ## 4. Run a separately authorized bounded GitHub pilot
 
 The first production write requires a separate operator authorization after
-reviewing the successful preflight and confirming the target. Start with the
-existing live-smoke cap:
+reviewing the successful preflight and confirming the target. The approved
+discovery plan fetches 100 results per search page, so keep the first pilot's
+candidate budget page-aligned. It can discover up to 100 candidates, while
+enrichment and assessment each remain capped at five:
 
 ```bash
 bun run pipeline -- --live-smoke --execute \
-  --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
+  --max-queries 1 --max-pages 1 --max-candidates 100 \
+  --max-enrichments 5 --max-assessments 5 --max-logo-projects 5 \
+  --allow-hosted-writes --confirm-project-ref hvunezhzpnpdkfiqgaaa
 ```
 
 Hosted writes require both `--execute` and `--allow-hosted-writes`, together
 with a matching `--confirm-project-ref`. Do not automate a run after preflight.
-The live-smoke ceiling is one GitHub search query and page, ten discovered
-candidates, five enrichments, five assessments, and five logo candidates. It
-does not upload logos, mark a license or quality as human-verified, approve a
-logo, or publish a project.
+The live-smoke ceiling is one GitHub search query and page, 100 discovered
+candidates, five enrichments, five assessments, and five logo candidates.
+Hosted live-smoke preflight rejects a candidate budget below the approved
+100-result page before creating an ingestion job. It does not upload logos,
+mark a license or quality as human-verified, approve a logo, or publish a
+project. Discovered candidates are private queue records, not published
+projects.
+
+The earlier run `0fb02e01-1f76-4d5f-a0d6-14b1398e9552` authenticated to GitHub
+and reported no HTTP failures, but its 10-candidate budget could not hold the
+100-result search page. The worker released its one claimed partition without
+committing the page or advancing its cursor. The job is correctly recorded as
+partial, with zero candidates or downstream records; all ten registered
+partitions remain pending, with no active leases or integrity findings. No
+automatic publication occurred. Leave that historical job report unchanged.
+The next run reuses the original plan version, partition fingerprints, and
+checkpoints. A budget-limited outcome reports that the page was not committed,
+preserves its checkpoint, and exits nonzero; it is not a rate-limit failure.
+
+Do not treat exit code zero or GitHub authentication alone as successful
+ingestion. Require `data_ingestion_success: true`, backed by persisted source
+provenance and a validated candidate-to-draft lineage in the report.
 
 Keep the structured report and distinguish these counts: discovered GitHub
 candidates, successfully enriched public repositories, completed assessments,
@@ -122,7 +144,9 @@ worker stopped and its lease expired before any separately authorized resume:
 bun run pipeline -- --status
 bun run pipeline -- --audit
 bun run pipeline -- --resume --execute --live-smoke \
-  --allow-hosted-writes --confirm-project-ref "$PROJECT_REF"
+  --max-queries 1 --max-pages 1 --max-candidates 100 \
+  --max-enrichments 5 --max-assessments 5 --max-logo-projects 5 \
+  --allow-hosted-writes --confirm-project-ref hvunezhzpnpdkfiqgaaa
 ```
 
 ## 5. Review drafts and publish individually
@@ -148,12 +172,12 @@ catalog count.
 After the pilot, review rate use, classification results, failure recovery,
 editorial queue size, manual review capacity, and provider costs. Increase
 manual batch limits gradually and review every report before repeating. The
-pipeline hard ceilings are 50 candidates, 25 enrichments, 25 assessments, and
+pipeline hard ceilings are 100 candidates, 25 enrichments, 25 assessments, and
 25 logo-candidate checks per run. For example:
 
 ```bash
 bun run pipeline -- --execute --max-queries 2 --max-pages 1 \
-  --max-candidates 50 --max-enrichments 25 --max-assessments 25 \
+  --max-candidates 100 --max-enrichments 25 --max-assessments 25 \
   --max-logo-projects 25 --allow-hosted-writes \
   --confirm-project-ref "$PROJECT_REF"
 ```

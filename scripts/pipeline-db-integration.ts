@@ -269,9 +269,20 @@ async function main() {
     id: markerId("99300"), owner: "private-project", name: `private-${suffix}`,
     description: "Private local fixture", topics: ["developer-tools"], private: true, visibility: "private",
   };
+  const priorityCandidateId = await insertCandidate(admin, mainRepository, `pilot-main-${suffix}`);
+  const priorityCandidateUpdate = await admin.from("repository_candidates").update({ first_seen_at: "2020-01-01T00:00:00Z" } as never)
+    .eq("id", priorityCandidateId);
+  assert(!priorityCandidateUpdate.error, "The lineage fixture must be eligible first so the five-item enrichment cap can still complete it.");
+  for (let index = 0; index < 5; index += 1) {
+    const queuedRepository: FixtureRepository = {
+      id: markerId("99700"), owner: "queued-integration", name: `queued-${suffix}-${index}`,
+      description: `Queued local integration fixture ${index}`, topics: [],
+    };
+    await insertCandidate(admin, queuedRepository, `queued-${suffix}-${index}`);
+  }
   const rejectedCandidateId = await insertCandidate(admin, rejectedRepository, `rejected-${suffix}`, { rejected: true });
   const githubFixture = makeGitHubFixture({ main: mainRepository, rejected: rejectedRepository, privateRepo: privateRepository });
-  const boundedArgs = ["--max-queries", "1", "--max-pages", "1", "--max-candidates", "10", "--max-enrichments", "5", "--max-assessments", "5", "--max-logo-projects", "25"];
+  const boundedArgs = ["--max-queries", "1", "--max-pages", "1", "--max-candidates", "100", "--max-enrichments", "5", "--max-assessments", "5", "--max-logo-projects", "25"];
 
   const clean = await run(["--execute", ...boundedArgs], admin, githubFixture.client);
   assert(clean.code === 0 && clean.report.run_status === "complete", "The real orchestrator should complete the clean local fixture pilot.");
@@ -280,6 +291,12 @@ async function main() {
   "A linked fixture pilot must report completed execution, committed data, and a validated end-to-end project separately.");
   const stageNames = (clean.report.stages as Row[]).map((stage) => stage.stage);
   assert(stageNames.join(",") === "discovery,enrichment,assessment,logo_candidates", "All four real workers must run in order.");
+  const cleanStages = clean.report.stages as Row[];
+  const enrichmentStage = cleanStages.find((stage) => stage.stage === "enrichment");
+  const assessmentStage = cleanStages.find((stage) => stage.stage === "assessment");
+  assert(Number(enrichmentStage?.attempted) === 5 && Number(enrichmentStage?.persisted_record_count) <= 5
+    && Number(assessmentStage?.attempted) <= 5 && Number(assessmentStage?.persisted_record_count) <= 5,
+  "The end-to-end pilot must keep both downstream workers capped at five items despite a larger discovery budget.");
   assert((githubFixture.requests.filter((request) => new URL(request).pathname === "/search/repositories").length) === 1,
     "The orchestrator must make exactly one deterministic search request for this bounded pilot.");
 
@@ -305,6 +322,8 @@ async function main() {
     "Valid stage records without a joined lineage must not satisfy end-to-end verification.");
   assert(clean.report.publication_or_approval_performed === false,
     "The real pipeline report must state that no publication or approval was performed.");
+  assert((inspected.project_drafts as Row[]).every((draft) => draft.publication_status !== "published"),
+    "No project discovered or assessed by the pipeline may be automatically published.");
 
   const beforeDryRun = await countRows(admin);
   const dryFixture = makeGitHubFixture({ main: mainRepository, rejected: rejectedRepository, privateRepo: privateRepository, includeDiscoveryResults: false });
