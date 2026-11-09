@@ -324,6 +324,8 @@ async function main() {
     p_job_id: recoveryJob, p_worker_id: "assessment-recovery-interrupted", p_limit: 1, p_lease_seconds: 60,
   }))[0];
   assert(firstInterruptedClaim, "The interrupted recovery worker must claim one existing assessment.");
+  const firstInterruptedAttempt = await single<Row>(db.from("repository_assessments").select("attempts")
+    .eq("id", String(firstInterruptedClaim.assessment_id)).single(), "Read attempt count before simulating the repeated interruption");
   const interruptedAt = new Date(Date.now() - 60_000).toISOString();
   const expireInterruptedClaim = await db.from("repository_assessments").update({ lease_expires_at: interruptedAt })
     .eq("id", String(firstInterruptedClaim.assessment_id));
@@ -341,8 +343,8 @@ async function main() {
   const recoveryPreflight = recoveredSummary?.recovery_preflight as Row;
   assert(recoveredSummary?.job_id === recoveryJob && recoveredSummary?.assessed === 4
     && recoveredSummary?.drafted === 4 && recoveredSummary?.outcome_class === "completed"
-    && recoveredSummary?.job_status === "succeeded" && recoveryPreflight.queued_assessments === 2
-    && recoveryPreflight.expired_processing_assessments === 2,
+    && recoveredSummary?.job_status === "succeeded" && recoveryPreflight.queued_assessments === 3
+    && recoveryPreflight.expired_processing_assessments === 1,
   `Recovery must resume the requested job and complete at most its four existing assessments: ${JSON.stringify(recoveredSummary)}`);
   const recoveredRows = await rows<Row>(db.from("repository_assessments").select("id,repository_id,status,attempts,max_attempts,job_id,result")
     .in("repository_id", recoveryIds.map(String)), "Read assessments after recovery");
@@ -351,6 +353,9 @@ async function main() {
     && ["assessed", "needs_review"].includes(String(row.status)) && Number(row.attempts) <= Number(row.max_attempts)
     && Number(row.attempts) >= Number(inventoryBeforeRecovery.assessments.find((prior) => prior.id === row.id)?.attempts ?? 0)),
   "Recovery must preserve all existing assessment rows, the original job, and their attempt limits.");
+  const reinterruptedAssessment = recoveredRows.find((row) => row.id === firstInterruptedClaim.assessment_id);
+  assert(reinterruptedAssessment && Number(reinterruptedAssessment.attempts) >= Number(firstInterruptedAttempt.attempts) + 1,
+    "A repeated interruption must advance the existing attempt count without losing the assessment row.");
   assert(preservedAssessmentAfter?.status === "assessed"
     && JSON.stringify(preservedAssessmentAfter.result) === JSON.stringify(existingAssessment.result)
     && Number(preservedAssessmentAfter.attempts) === preservedAttemptCount,
