@@ -9,6 +9,9 @@ select has_column('public', 'review_queue', 'assessment_id', 'editorial review i
 select ok(has_function_privilege('service_role', 'public.claim_github_repository_assessments(uuid,text,integer,integer)', 'EXECUTE'), 'service role can claim assessments');
 select ok(not has_function_privilege('anon', 'public.claim_github_repository_assessments(uuid,text,integer,integer)', 'EXECUTE'), 'anonymous clients cannot claim assessments');
 select ok(not has_function_privilege('authenticated', 'public.complete_github_repository_assessment(uuid,text,uuid,jsonb,uuid[])', 'EXECUTE'), 'ordinary authenticated clients cannot complete assessments');
+select ok(has_function_privilege('service_role', 'public.begin_github_repository_assessment_recovery(uuid,text,integer)', 'EXECUTE'), 'service role can begin bounded assessment recovery');
+select ok(has_function_privilege('service_role', 'public.claim_github_repository_assessments_for_recovery(uuid,text,integer,integer)', 'EXECUTE'), 'service role can claim only job-scoped recovery assessments');
+select ok(has_function_privilege('service_role', 'public.finish_github_repository_assessment_recovery(uuid,text)', 'EXECUTE'), 'service role can finalize assessment recovery');
 
 insert into public.source_records (provider, record_kind, source_key, source_url, fetched_at, http_status, source_metadata)
 values ('github', 'discovery_page', 'assessment-pgtap-candidate', 'https://api.github.com/search/repositories?q=assessment', clock_timestamp(), 200, '{"fixture":true}');
@@ -124,6 +127,9 @@ set local "request.jwt.claims" = '{"role":"anon"}';
 select throws_ok($$select count(*) from public.repository_assessments$$, '42501', null, 'anonymous clients cannot read private assessment results');
 select throws_ok($$select count(*) from public.repository_assessment_sources$$, '42501', null, 'anonymous clients cannot read private assessment provenance');
 select throws_ok($$select public.start_github_repository_assessment_job(false, '{}'::jsonb)$$, '42501', null, 'anonymous clients cannot start assessments');
+select throws_ok($$select public.begin_github_repository_assessment_recovery(gen_random_uuid(), 'anon', 4)$$, '42501', null, 'anonymous clients cannot begin assessment recovery');
+select throws_ok($$select * from public.claim_github_repository_assessments_for_recovery(gen_random_uuid(), 'anon', 1, 60)$$, '42501', null, 'anonymous clients cannot claim recovery assessments');
+select throws_ok($$select public.finish_github_repository_assessment_recovery(gen_random_uuid(), 'anon')$$, '42501', null, 'anonymous clients cannot finalize assessment recovery');
 
 reset role;
 select * from finish();

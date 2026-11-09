@@ -151,6 +151,18 @@ async function runAssessment(admin: ReturnType<typeof createSupabaseAdminClient>
   return output.join("").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Row);
 }
 
+async function runAssessmentRecovery(admin: ReturnType<typeof createSupabaseAdminClient>, jobId: string) {
+  const output: string[] = []; const errors: string[] = [];
+  const status = await runAssessmentCli(["--execute", "--resume", "--max-repositories", "4"], {
+    supabase: admin as unknown as NonNullable<AssessmentCliDependencies["supabase"]>,
+    recoveryJobId: jobId,
+    writeStdout: (line) => output.push(line), writeStderr: (line) => errors.push(line),
+    now: () => new Date("2026-11-06T12:00:00.000Z"),
+  });
+  assert(status === 0, `Assessment recovery worker failed: ${errors.join("").slice(0, 300)}`);
+  return output.join("").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Row);
+}
+
 async function main() {
   assert(url && anonKey, "Local Supabase URL and anon key are required.");
   const admin = createSupabaseAdminClient();
@@ -221,36 +233,171 @@ async function main() {
 
   await insertCandidate(db, idThree, marker);
   const enrichmentThree = await runEnrichment(admin, idThree, "2026-11-05T10:02:00.000Z", false);
-  assert(enrichmentThree.includes('"enriched":1'), "The lease-recovery fixture must be enriched successfully.");
+  assert(enrichmentThree.includes('"enriched":1'), "The concurrent-claim fixture must be enriched successfully.");
   const leaseJob = await rpc<string>(db, "start_github_repository_assessment_job", { p_resume: false, p_metadata: { fixture: "concurrent-claim" } });
   const competingClaims = await Promise.all([
     rpc<Row[]>(db, "claim_github_repository_assessments", { p_job_id: leaseJob, p_worker_id: "assessment-claim-a", p_limit: 1, p_lease_seconds: 60 }),
     rpc<Row[]>(db, "claim_github_repository_assessments", { p_job_id: leaseJob, p_worker_id: "assessment-claim-b", p_limit: 1, p_lease_seconds: 60 }),
   ]);
   const claimedRows = competingClaims.flat();
-  assert(claimedRows.length === 1, "Concurrent workers must atomically claim a queued assessment only once.");
+  assert(claimedRows.length === 1, "Concurrent workers must atomically claim one queued assessment only once.");
   const staleClaim = claimedRows[0]!;
   const staleWorkerId = competingClaims[0]!.length ? "assessment-claim-a" : "assessment-claim-b";
-  const expireLease = await db.from("repository_assessments").update({ lease_expires_at: new Date(Date.now() - 60_000).toISOString() }).eq("id", String(staleClaim.assessment_id));
-  assert(!expireLease.error, "Could not expire the assessment fixture lease.");
-  const reclaimedEvents = await runAssessment(admin, 1);
-  const reclaimedSummary = reclaimedEvents.find((event) => event.event === "assessment_summary");
-  assert(reclaimedSummary?.assessed === 1 && reclaimedSummary?.drafted === 1, "An expired assessment lease must be safely reclaimed.");
+  const expireConcurrentLease = await db.from("repository_assessments").update({
+    lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+  }).eq("id", String(staleClaim.assessment_id));
+  assert(!expireConcurrentLease.error, "Could not expire the disposable concurrent-claim lease.");
+  const concurrentRecovery = await runAssessment(admin, 1);
+  const concurrentSummary = concurrentRecovery.find((event) => event.event === "assessment_summary");
+  assert(concurrentSummary?.assessed === 1 && concurrentSummary?.drafted === 1,
+    "A normal assessment worker must still reclaim an expired claim.");
   const staleMutation = await db.rpc("fail_github_repository_assessment", {
     p_assessment_id: String(staleClaim.assessment_id), p_worker_id: staleWorkerId,
     p_lease_token: String(staleClaim.lease_token), p_error_summary: "stale_fixture", p_retryable: false,
   });
   assert(staleMutation.error, "A stale assessment lease token must be fenced from later writes.");
   const finishLeaseJob = await rpc(db, "finish_github_repository_assessment_job", { p_job_id: leaseJob });
-  assert(finishLeaseJob, "The original claim job should finish after lease recovery.");
+  assert(finishLeaseJob, "The original concurrent-claim job should finish after lease recovery.");
+
+  const recoveryIds = [idOne + 9, idOne + 10, idOne + 11, idOne + 12, idOne + 13];
+  for (const id of recoveryIds) await insertCandidate(db, id, marker);
+  for (const [index, id] of recoveryIds.entries()) {
+    const enrichment = await runEnrichment(admin, id, `2026-11-05T10:0${index + 3}:00.000Z`, false);
+    assert(enrichment.includes('"enriched":1'), `The assessment recovery fixture ${id} must be enriched successfully.`);
+  }
+  const recoveryJob = await rpc<string>(db, "start_github_repository_assessment_job", { p_resume: false, p_metadata: { fixture: "assessment-recovery" } });
+  const preservedRepository = await single<Row>(db.from("repositories").select("id").eq("provider_repository_id", String(recoveryIds[4])).single(), "Read the prior-result recovery fixture");
+  const preservedAssessment = await single<Row>(db.from("repository_assessments").select("id,attempts,result,assessed_at")
+    .eq("repository_id", String(preservedRepository.id)).single(), "Read the prior-result assessment fixture");
+  const existingAssessment = await single<Row>(db.from("repository_assessments").select("result")
+    .eq("repository_id", String(repo.id)).single(), "Read a valid persisted assessment result for the recovery fixture");
+  assert(existingAssessment.result && typeof existingAssessment.result === "object", "The prior-result fixture must have a persisted assessment result.");
+  const preservedAttemptCount = Math.max(1, Number(preservedAssessment.attempts));
+  const preservePriorResult = await db.from("repository_assessments").update({
+    status: "assessed", result: existingAssessment.result, assessed_at: new Date().toISOString(),
+    attempts: preservedAttemptCount,
+  }).eq("id", String(preservedAssessment.id));
+  const preservePriorProject = await db.from("repositories").update({ project_id: String(project.id) }).eq("id", String(preservedRepository.id));
+  assert(!preservePriorResult.error && !preservePriorProject.error, "Could not prepare the already-assessed recovery fixture.");
 
   const curatedName = "Manual editorial title";
   const curatedDescription = "Manual editorial description";
   const editorialValues = await db.from("projects").update({ name: curatedName, description: curatedDescription, official_website_url: "https://example.test/editorial", license_status: "needs_review", license_identifier: "Custom-Editorial", quality_status: "needs_review" }).eq("id", String(project.id));
-  assert(!editorialValues.error, "Could not set manual editorial fixture values.");
+  assert(!editorialValues.error, "Could not set manual editorial fixture values before recovery.");
   const productivityCategory = await single<Row>(db.from("categories").select("id").eq("slug", "productivity").limit(1).single(), "Read manual category fixture");
   const categoryUpdate = await db.from("project_categories").update({ category_id: productivityCategory.id }).eq("project_id", String(project.id));
-  assert(!categoryUpdate.error, "Could not set manual editorial category fixture.");
+  assert(!categoryUpdate.error, "Could not set manual editorial category fixture before recovery.");
+  const oldClaim = (await rpc<Row[]>(db, "claim_github_repository_assessments", {
+    p_job_id: recoveryJob, p_worker_id: "assessment-recovery-old-worker", p_limit: 1, p_lease_seconds: 60,
+  }))[0];
+  assert(oldClaim, "The recovery fixture must have one prior processing claim.");
+  const wrongJob = await db.rpc("begin_github_repository_assessment_recovery", {
+    p_job_id: "11111111-1111-4111-8111-111111111111", p_worker_id: "recovery-wrong-job", p_max_assessments: 4,
+  });
+  const completedJob = await db.rpc("begin_github_repository_assessment_recovery", {
+    p_job_id: String(summary.job_id), p_worker_id: "recovery-completed-job", p_max_assessments: 4,
+  });
+  assert(wrongJob.error && completedJob.error, "Recovery must reject a missing job and a different completed job.");
+  const liveLeaseRecovery = await db.rpc("begin_github_repository_assessment_recovery", {
+    p_job_id: recoveryJob, p_worker_id: "recovery-live-lease", p_max_assessments: 4,
+  });
+  assert(liveLeaseRecovery.error?.code === "55P03", "Recovery must reject when a live assessment lease exists.");
+  const expireLease = await db.from("repository_assessments").update({
+    lease_expires_at: new Date(Date.now() - 60_000).toISOString(),
+  }).eq("id", String(oldClaim.assessment_id));
+  assert(!expireLease.error, "Could not expire the assessment recovery fixture lease.");
+
+  const inventoryBeforeRecovery = {
+    jobs: await rows<Row>(db.from("ingestion_jobs").select("id,job_type").in("job_type", ["github_discovery", "github_enrichment", "github_assessment"]), "Read jobs before assessment recovery"),
+    candidates: await rows<Row>(db.from("repository_candidates").select("id"), "Read candidates before assessment recovery"),
+    sources: await rows<Row>(db.from("source_records").select("id"), "Read source records before assessment recovery"),
+    discovery: await rows<Row>(db.from("discovery_queries").select("id"), "Read discovery partitions before assessment recovery"),
+    assessments: await rows<Row>(db.from("repository_assessments").select("id,attempts,job_id").eq("job_id", recoveryJob), "Read assessments before recovery"),
+  };
+  const interruptedRecovery = await rpc<Row>(db, "begin_github_repository_assessment_recovery", {
+    p_job_id: recoveryJob, p_worker_id: "assessment-recovery-interrupted", p_max_assessments: 4,
+  });
+  assert(interruptedRecovery.open_assessments === 4 && interruptedRecovery.queued_assessments === 3
+    && interruptedRecovery.expired_processing_assessments === 1,
+  "Recovery preflight must preserve three queued assessments and reclaim only the one expired lease.");
+  const firstInterruptedClaim = (await rpc<Row[]>(db, "claim_github_repository_assessments_for_recovery", {
+    p_job_id: recoveryJob, p_worker_id: "assessment-recovery-interrupted", p_limit: 1, p_lease_seconds: 60,
+  }))[0];
+  assert(firstInterruptedClaim, "The interrupted recovery worker must claim one existing assessment.");
+  const interruptedAt = new Date(Date.now() - 60_000).toISOString();
+  const expireInterruptedClaim = await db.from("repository_assessments").update({ lease_expires_at: interruptedAt })
+    .eq("id", String(firstInterruptedClaim.assessment_id));
+  const expireRecoveryOwner = await db.from("ingestion_jobs").update({ metadata: {
+    assessment_recovery_worker_id: "assessment-recovery-interrupted",
+    assessment_recovery_expires_at: interruptedAt,
+  } }).eq("id", recoveryJob);
+  assert(!expireInterruptedClaim.error && !expireRecoveryOwner.error, "Could not simulate a repeated worker interruption in the disposable database.");
+  const interruptedJobFinalization = await rpc<Row>(db, "finish_github_repository_assessment_job", { p_job_id: recoveryJob });
+  assert(interruptedJobFinalization.status === "partial" && interruptedJobFinalization.open_assessments === 4,
+    "A finalized interruption must remain partial with all four unfinished assessments attached to the original job.");
+
+  const recoveredEvents = await runAssessmentRecovery(admin, recoveryJob);
+  const recoveredSummary = recoveredEvents.find((event) => event.event === "assessment_recovery_summary");
+  const recoveryPreflight = recoveredSummary?.recovery_preflight as Row;
+  assert(recoveredSummary?.job_id === recoveryJob && recoveredSummary?.assessed === 4
+    && recoveredSummary?.drafted === 4 && recoveredSummary?.outcome_class === "completed"
+    && recoveredSummary?.job_status === "succeeded" && recoveryPreflight.queued_assessments === 2
+    && recoveryPreflight.expired_processing_assessments === 2,
+  `Recovery must resume the requested job and complete at most its four existing assessments: ${JSON.stringify(recoveredSummary)}`);
+  const recoveredRows = await rows<Row>(db.from("repository_assessments").select("id,repository_id,status,attempts,max_attempts,job_id,result")
+    .in("repository_id", recoveryIds.map(String)), "Read assessments after recovery");
+  const preservedAssessmentAfter = recoveredRows.find((row) => row.id === preservedAssessment.id);
+  assert(recoveredRows.length === 5 && recoveredRows.every((row) => row.job_id === recoveryJob
+    && ["assessed", "needs_review"].includes(String(row.status)) && Number(row.attempts) <= Number(row.max_attempts)
+    && Number(row.attempts) >= Number(inventoryBeforeRecovery.assessments.find((prior) => prior.id === row.id)?.attempts ?? 0)),
+  "Recovery must preserve all existing assessment rows, the original job, and their attempt limits.");
+  assert(preservedAssessmentAfter?.status === "assessed"
+    && JSON.stringify(preservedAssessmentAfter.result) === JSON.stringify(existingAssessment.result)
+    && Number(preservedAssessmentAfter.attempts) === preservedAttemptCount,
+  "Recovery must leave a previously completed assessment result and attempt count untouched.");
+  const preservedEditorialProject = await single<Row>(db.from("projects").select("name,description,official_website_url,license_status,license_identifier,quality_status")
+    .eq("id", String(project.id)).single(), "Read editorial project after assessment recovery");
+  assert(preservedEditorialProject.name === curatedName && preservedEditorialProject.description === curatedDescription
+    && preservedEditorialProject.official_website_url === "https://example.test/editorial"
+    && preservedEditorialProject.license_status === "needs_review" && preservedEditorialProject.license_identifier === "Custom-Editorial"
+    && preservedEditorialProject.quality_status === "needs_review",
+  "Recovery must preserve preexisting editorial project decisions.");
+  const preservedEditorialCategory = await rows<Row>(db.from("project_categories").select("category_id").eq("project_id", String(project.id)), "Read editorial category after assessment recovery");
+  assert(preservedEditorialCategory.length === 1 && preservedEditorialCategory[0]?.category_id === productivityCategory.id,
+    "Recovery must preserve preexisting editorial category decisions.");
+  const recoveredProjects = await rows<Row>(db.from("projects").select("id,slug,publication_status,published_at,featured")
+    .in("slug", recoveryIds.map((id) => `github-${id}`)), "Read recovered project drafts");
+  assert(recoveredProjects.length === 4 && recoveredProjects.every((row) => row.publication_status === "pending_review"
+    && row.published_at === null && row.featured === false), "Recovery may create only unpublished, unfeatured pending-review drafts.");
+  const recoveryAssessmentIds = recoveredRows.filter((row) => row.id !== preservedAssessment.id).map((row) => String(row.id));
+  const recoveredReviews = await rows<Row>(db.from("review_queue").select("id,assessment_id,status")
+    .in("assessment_id", recoveryAssessmentIds), "Read recovered review queue items");
+  assert(recoveredReviews.length === 4 && new Set(recoveredReviews.map((row) => row.assessment_id)).size === 4
+    && recoveredReviews.every((row) => ["open", "in_review"].includes(String(row.status))),
+  "Recovery must reuse one open review record per completed assessment without duplicates.");
+  const attemptedAgain = await db.rpc("fail_github_repository_assessment", {
+    p_assessment_id: String(oldClaim.assessment_id), p_worker_id: "assessment-recovery-old-worker",
+    p_lease_token: String(oldClaim.lease_token), p_error_summary: "stale_fixture", p_retryable: false,
+  });
+  assert(attemptedAgain.error, "A pre-recovery worker token must remain fenced from later writes.");
+  const inventoryAfterRecovery = {
+    jobs: await rows<Row>(db.from("ingestion_jobs").select("id,job_type").in("job_type", ["github_discovery", "github_enrichment", "github_assessment"]), "Read jobs after assessment recovery"),
+    candidates: await rows<Row>(db.from("repository_candidates").select("id"), "Read candidates after assessment recovery"),
+    sources: await rows<Row>(db.from("source_records").select("id"), "Read source records after assessment recovery"),
+    discovery: await rows<Row>(db.from("discovery_queries").select("id"), "Read discovery partitions after assessment recovery"),
+  };
+  assert(JSON.stringify(inventoryAfterRecovery.jobs.map((row) => row.id).sort()) === JSON.stringify(inventoryBeforeRecovery.jobs.map((row) => row.id).sort())
+    && JSON.stringify(inventoryAfterRecovery.candidates.map((row) => row.id).sort()) === JSON.stringify(inventoryBeforeRecovery.candidates.map((row) => row.id).sort())
+    && JSON.stringify(inventoryAfterRecovery.sources.map((row) => row.id).sort()) === JSON.stringify(inventoryBeforeRecovery.sources.map((row) => row.id).sort())
+    && JSON.stringify(inventoryAfterRecovery.discovery.map((row) => row.id).sort()) === JSON.stringify(inventoryBeforeRecovery.discovery.map((row) => row.id).sort()),
+  "Assessment recovery must create no jobs, candidates, source observations, or discovery partitions.");
+  const finalOperatorReport = await rpc<Row>(db, "pipeline_operator_report", {});
+  const activeLeases = finalOperatorReport.active_leases as Row;
+  const runningJobs = finalOperatorReport.running_jobs as Row[];
+  assert(finalOperatorReport.schema && (finalOperatorReport.schema as Row).ready === true
+    && Number(activeLeases.assessment) === 0 && !runningJobs.some((row) => row.job_id === recoveryJob),
+  "Operator reporting must show a ready schema, no assessment leases, and no running recovered job.");
+
   const candidate = await db.from("repository_candidates").update({ enrichment_status: "queued", enrichment_completed_at: null, enrichment_error: null }).eq("provider_repository_id", String(idOne));
   assert(!candidate.error, "Could not queue the rename enrichment fixture.");
   const renameTime = "2026-11-06T10:00:00.000Z";
