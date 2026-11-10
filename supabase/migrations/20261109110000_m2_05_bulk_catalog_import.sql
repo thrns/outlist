@@ -253,6 +253,8 @@ declare
   v_batch_hashes jsonb;
   v_batch_payload_hashes jsonb;
   v_batch_payload_hash text;
+  v_safe_reason_codes jsonb;
+  v_observed_at timestamptz;
   v_results jsonb := '[]'::jsonb;
 begin
   if auth.role() is distinct from 'service_role' then
@@ -309,27 +311,40 @@ begin
     if jsonb_typeof(v_seed) is distinct from 'object'
       or v_id is null or v_id !~ '^[1-9][0-9]{0,18}$'
       or v_seed->>'schema_version' is distinct from '1'
-      or v_seed->>'primary_category' is null
       or coalesce(v_item->>'source_batch', '') !~ '^[1-9][0-9]{0,2}$'
       or coalesce(v_item->>'source_line', '') !~ '^[1-9][0-9]{0,3}$'
       or jsonb_typeof(v_check) is distinct from 'object'
       or jsonb_typeof(v_item->'import_candidate') is distinct from 'boolean' then
       raise exception 'catalog batch item is missing validated source data' using errcode = '22023';
     end if;
-    select c.id into v_category_id from public.categories c
-      where c.slug = v_seed->>'primary_category' and c.is_active;
-    if v_category_id is null then
-      raise exception 'catalog category is missing or inactive: %', v_seed->>'primary_category' using errcode = '23503';
-    end if;
-
     if not (v_item->>'import_candidate')::boolean then
+      if v_check->>'status' is distinct from 'rejected_or_excluded'
+        or jsonb_typeof(v_provenance) is distinct from 'object'
+        or v_provenance->>'source_url' is distinct from 'https://api.github.com/repositories/' || v_id
+        or v_provenance->>'stable_resource_identity' is distinct from 'github:repository:' || v_id
+        or v_provenance->>'api_version' is distinct from '2022-11-28'
+        or coalesce(v_provenance->>'http_status', '') !~ '^(200|403|404)$'
+        or nullif(v_provenance->>'fetched_at', '') is null
+        or (v_provenance->>'fetched_at')::timestamptz > v_now + interval '5 minutes' then
+        raise exception 'excluded catalog item requires a safe current identity observation' using errcode = '23514';
+      end if;
+      v_observed_at := (v_provenance->>'fetched_at')::timestamptz;
+      select coalesce(jsonb_agg(reason_code order by reason_code), '[]'::jsonb)
+      into v_safe_reason_codes
+      from (
+        select distinct reason->>'code' as reason_code
+        from jsonb_array_elements(coalesce(v_check->'reasons', '[]'::jsonb)) as reasons(reason)
+        where reason->>'code' in (
+          'not_publicly_available', 'repository_id_mismatch', 'github_access_not_publicly_verified'
+        )
+      ) safe_reasons;
+      if jsonb_array_length(v_safe_reason_codes) = 0 then
+        raise exception 'excluded catalog item has no recognized safe reason code' using errcode = '23514';
+      end if;
       v_excluded := v_excluded + 1;
       v_item_result := jsonb_build_object('catalog_import', jsonb_build_object(
-        'archive_sha256', v_archive_sha, 'batch_number', (v_item->>'source_batch')::integer,
-        'batch_line', (v_item->>'source_line')::integer, 'source_candidate', v_seed,
-        'category_slug', v_seed->>'primary_category', 'category_id', v_category_id,
-        'verification', v_check, 'github_response', v_response, 'provenance', v_provenance,
-        'exclusion_reason', 'Automated repository review rejected or excluded this candidate.'
+        'repository_id', v_id, 'classification', 'rejected_or_excluded',
+        'reason_codes', v_safe_reason_codes, 'observed_at', v_observed_at
       ));
       insert into public.ingestion_items (
         job_id, item_key, item_type, status, started_at, finished_at, result
@@ -340,6 +355,15 @@ begin
         'github_repository_id', v_id, 'result', 'excluded'
       ));
       continue;
+    end if;
+
+    if v_seed->>'primary_category' is null then
+      raise exception 'catalog candidate is missing its mapped category' using errcode = '22023';
+    end if;
+    select c.id into v_category_id from public.categories c
+      where c.slug = v_seed->>'primary_category' and c.is_active;
+    if v_category_id is null then
+      raise exception 'catalog category is missing or inactive: %', v_seed->>'primary_category' using errcode = '23503';
     end if;
 
     if jsonb_typeof(v_response) is distinct from 'object'
@@ -606,16 +630,85 @@ begin
 end;
 $function$;
 
+create or replace function public.catalog_import_exclusions(p_job_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_job public.ingestion_jobs%rowtype;
+  v_exclusions jsonb;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'service role required' using errcode = '42501';
+  end if;
+  select j.* into v_job from public.ingestion_jobs j
+  where j.id = p_job_id and j.job_type = 'catalog_import';
+  if not found then raise exception 'catalog import job was not found' using errcode = '22023'; end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'repository_id', safe_item.repository_id,
+    'classification', 'rejected_or_excluded',
+    'reason_codes', safe_item.reason_codes,
+    'observed_at', safe_item.observed_at
+  ) order by safe_item.repository_id), '[]'::jsonb)
+  into v_exclusions
+  from (
+    select coalesce(
+        i.result->'catalog_import'->>'repository_id',
+        i.result->'catalog_import'->'source_candidate'->>'github_repository_id',
+        split_part(i.item_key, ':', 2)
+      ) as repository_id,
+      case when jsonb_typeof(i.result->'catalog_import'->'reason_codes') = 'array' then (
+        select coalesce(jsonb_agg(reason_code order by reason_code), '[]'::jsonb)
+        from (
+          select distinct code #>> '{}' as reason_code
+          from jsonb_array_elements(i.result->'catalog_import'->'reason_codes') as codes(code)
+          where code #>> '{}' in (
+            'not_publicly_available', 'repository_id_mismatch', 'github_access_not_publicly_verified'
+          )
+        ) current_reasons
+      ) else (
+          select coalesce(jsonb_agg(reason_code order by reason_code), '[]'::jsonb)
+          from (
+            select distinct reason->>'code' as reason_code
+            from jsonb_array_elements(coalesce(i.result->'catalog_import'->'verification'->'reasons', '[]'::jsonb)) as reasons(reason)
+            where reason->>'code' in (
+              'not_publicly_available', 'repository_id_mismatch', 'github_access_not_publicly_verified'
+            )
+          ) legacy_reasons
+      ) end as reason_codes,
+      case when coalesce(
+        i.result->'catalog_import'->>'observed_at',
+        i.result->'catalog_import'->'provenance'->>'fetched_at'
+      ) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+        then coalesce(
+          i.result->'catalog_import'->>'observed_at',
+          i.result->'catalog_import'->'provenance'->>'fetched_at'
+        )::timestamptz
+        else coalesce(i.finished_at, i.started_at)
+      end as observed_at
+    from public.ingestion_items i
+    where i.job_id = p_job_id and i.item_type = 'catalog_import_exclusion'
+  ) safe_item
+  where safe_item.repository_id ~ '^[1-9][0-9]{0,18}$';
+  return v_exclusions;
+end;
+$function$;
+
 revoke all on function public.start_catalog_import(text, integer, integer, text, text, boolean, text, uuid) from public, anon, authenticated;
 revoke all on function public.heartbeat_catalog_import(uuid, text, uuid) from public, anon, authenticated;
 revoke all on function public.commit_catalog_import_batch(uuid, text, uuid, integer, text, jsonb) from public, anon, authenticated;
 revoke all on function public.finish_catalog_import(uuid, text, uuid, text) from public, anon, authenticated;
 revoke all on function public.catalog_import_status() from public, anon, authenticated;
+revoke all on function public.catalog_import_exclusions(uuid) from public, anon, authenticated;
 grant execute on function public.start_catalog_import(text, integer, integer, text, text, boolean, text, uuid) to service_role;
 grant execute on function public.heartbeat_catalog_import(uuid, text, uuid) to service_role;
 grant execute on function public.commit_catalog_import_batch(uuid, text, uuid, integer, text, jsonb) to service_role;
 grant execute on function public.finish_catalog_import(uuid, text, uuid, text) to service_role;
 grant execute on function public.catalog_import_status() to service_role;
+grant execute on function public.catalog_import_exclusions(uuid) to service_role;
 
 -- New seed metadata is consumed only when the standard assessment RPC creates
 -- a new pending-review project. Existing projects are never overwritten.
@@ -653,6 +746,7 @@ declare
   v_tag text;
   v_tag_slug text;
   v_tag_id uuid;
+  v_result jsonb;
 begin
   if auth.role() is distinct from 'service_role' then
     raise exception 'service role required' using errcode = '42501';
@@ -882,9 +976,16 @@ begin
       'drafted', coalesce((j.metadata->>'drafted')::integer, 0) + case when v_drafted then 1 else 0 end,
       'queued_for_review', coalesce((j.metadata->>'queued_for_review')::integer, 0) + case when v_queue_id is not null then 1 else 0 end
     ), updated_at = v_now where j.id = v_assessment.job_id;
-  return jsonb_build_object('status', v_status, 'drafted', v_drafted,
-    'project_id', v_project_id, 'review_queue_id', v_queue_id,
-    'publication_status', case when v_drafted then 'pending_review' else null end);
+  v_result := jsonb_build_object(
+    'status', v_status, 'drafted', v_drafted,
+    'project_id', v_project_id, 'review_queue_id', v_queue_id
+  );
+  if v_catalog_import is not null then
+    v_result := v_result || jsonb_build_object(
+      'publication_status', case when v_drafted then 'pending_review' else null end
+    );
+  end if;
+  return v_result;
 end;
 $function$;
 
@@ -931,7 +1032,8 @@ begin
     ('public.heartbeat_catalog_import(uuid,text,uuid)'),
     ('public.commit_catalog_import_batch(uuid,text,uuid,integer,text,jsonb)'),
     ('public.finish_catalog_import(uuid,text,uuid,text)'),
-    ('public.catalog_import_status()')
+    ('public.catalog_import_status()'),
+    ('public.catalog_import_exclusions(uuid)')
   ), checked as (
     select signature, to_regprocedure(signature) as proc from required
   )

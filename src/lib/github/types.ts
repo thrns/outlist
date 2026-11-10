@@ -38,6 +38,8 @@ export interface GitHubProvenance<T> {
   etag?: string;
   rateLimit?: GitHubRateLimit;
   apiVersion: typeof GITHUB_API_VERSION;
+  /** Schema-validated provider-shaped payload, only exposed by endpoints that explicitly request it. */
+  originalResponseData?: unknown;
   parsedResponseData: T;
 }
 

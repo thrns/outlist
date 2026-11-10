@@ -139,6 +139,12 @@ select is((select count(*)::integer from public.project_logos where project_id i
   'import batches never approve or create logos');
 select is((select count(*)::integer from public.source_records where source_metadata->>'catalog_import_job_id' =
   (select job_id::text from catalog_import_job)), 2, 'current GitHub source evidence is saved for new candidates');
+select is((select raw_payload->>'full_name' from public.source_records
+  where source_key = 'github:repository:99110001'), 'public-owner/tool-one',
+  'the source record preserves the provider-shaped GitHub REST response');
+select is((select result->'catalog_import'->'provenance'->>'stable_resource_identity' from public.ingestion_items
+  where job_id = (select job_id from catalog_import_job) and item_key = 'github:99110001'),
+  'github:repository:99110001', 'the candidate ledger preserves the stable identity provenance');
 
 select public.finish_catalog_import((select job_id from catalog_import_job), 'catalog-test-worker',
   (select lease_token from catalog_import_job), null);
@@ -215,13 +221,14 @@ select public.commit_catalog_import_batch(
   jsonb_build_array(jsonb_build_object(
     'source_candidate', jsonb_build_object('schema_version', 1, 'github_repository_id', '99110006',
       'name', 'Excluded Private Candidate', 'slug', 'excluded-private-candidate',
+      'description', 'SENSITIVE ARCHIVED DESCRIPTION',
       'primary_category', 'developer-tools', 'license_review_status', 'needs_review'),
     'source_batch', 1, 'source_line', 1, 'import_candidate', false,
     'verification', jsonb_build_object('status', 'rejected_or_excluded', 'reasons',
       jsonb_build_array(jsonb_build_object('code', 'not_publicly_available'))),
     'github_response', jsonb_build_object('id', 99110006, 'owner', jsonb_build_object('login', 'private-owner'),
       'name', 'private-repo', 'full_name', 'private-owner/private-repo', 'private', true,
-      'disabled', false, 'visibility', 'private'),
+      'disabled', false, 'visibility', 'private', 'description', 'SENSITIVE PRIVATE DESCRIPTION'),
     'provenance', jsonb_build_object('source_url', 'https://api.github.com/repositories/99110006',
       'stable_resource_identity', 'github:repository:99110006', 'fetched_at', clock_timestamp(),
       'http_status', 200, 'api_version', '2022-11-28')
@@ -229,12 +236,35 @@ select public.commit_catalog_import_batch(
 );
 select is((select item_type from public.ingestion_items where job_id = (select job_id from catalog_import_invalid)
   and item_key = 'github:99110006'), 'catalog_import_exclusion',
-  'excluded candidates retain their curation and review evidence in the import ledger');
-select is((select result->'catalog_import'->'github_response'->>'private' from public.ingestion_items
-  where job_id = (select job_id from catalog_import_invalid) and item_key = 'github:99110006'), 'true',
-  'the rejected private response remains in source evidence without creating a candidate');
+  'excluded identities receive a sanitized classification in the import ledger');
+select is((select result->'catalog_import'->>'repository_id' from public.ingestion_items
+  where job_id = (select job_id from catalog_import_invalid) and item_key = 'github:99110006'), '99110006',
+  'the exclusion ledger retains only the safe stable repository identity');
+select is((select result->'catalog_import'->>'classification' from public.ingestion_items
+  where job_id = (select job_id from catalog_import_invalid) and item_key = 'github:99110006'), 'rejected_or_excluded',
+  'the exclusion ledger records the review classification');
+select ok((select not (result->'catalog_import' ? 'github_response')
+  and not (result->'catalog_import' ? 'source_candidate')
+  and not (result->'catalog_import' ? 'provenance')
+  and result::text not like '%SENSITIVE%'
+  and result::text not like '%private-owner%'
+  from public.ingestion_items where job_id = (select job_id from catalog_import_invalid) and item_key = 'github:99110006'),
+  'private repository fields and archived descriptions are absent from the exclusion ledger');
+select is((select count(*)::integer from public.ingestion_items i,
+  lateral jsonb_object_keys(i.result->'catalog_import') as catalog_import_keys(key)
+  where i.job_id = (select job_id from catalog_import_invalid) and i.item_key = 'github:99110006'), 4,
+  'the exclusion result contains only identity, classification, reason codes, and observation timestamp');
 select is((select count(*)::integer from public.repository_candidates where provider_repository_id = '99110006'), 0,
   'excluded private identities never enter the repository candidate queue');
+select is((select count(*)::integer from public.source_records where source_key = 'github:repository:99110006'), 0,
+  'restricted GitHub metadata never enters public source_records');
+select is(jsonb_array_length(public.catalog_import_exclusions((select job_id from catalog_import_invalid))), 1,
+  'resume reporting can safely recover previously excluded identities');
+select is((public.catalog_import_exclusions((select job_id from catalog_import_invalid))->0->>'repository_id'), '99110006',
+  'resumed reports receive only the safe excluded identity');
+select ok((public.catalog_import_exclusions((select job_id from catalog_import_invalid)))::text not like '%SENSITIVE%'
+  and (public.catalog_import_exclusions((select job_id from catalog_import_invalid)))::text not like '%private-owner%',
+  'resume exclusion results cannot re-expose restricted metadata');
 select public.finish_catalog_import((select job_id from catalog_import_invalid), 'catalog-test-worker-invalid',
   (select lease_token from catalog_import_invalid), null);
 select is((public.catalog_import_status()->'reconciliation'->>'candidate_item_ledger_matches')::boolean, true,
@@ -242,6 +272,8 @@ select is((public.catalog_import_status()->'reconciliation'->>'candidate_item_le
 set local "request.jwt.claims" = '{"role":"anon"}';
 select throws_ok($$select public.catalog_import_status()$$, '42501', null,
   'import status is available only to the service role');
+select throws_ok($$select public.catalog_import_exclusions((select job_id from catalog_import_invalid))$$, '42501', null,
+  'catalog exclusion details are available only to the service role');
 
 select * from finish();
 rollback;

@@ -12,6 +12,7 @@
     "test": "bun --bun vitest run",
     "test:auth-e2e": "bun --bun scripts/auth-e2e.mjs",
     "test:public-frontend-e2e": "bun --bun scripts/public-frontend-e2e.mjs",
+    "test:catalog-import-db": "bun --conditions=react-server scripts/catalog-import-db-integration.ts",
     "test:discovery-db": "bun --conditions=react-server scripts/discovery-db-integration.ts",
     "test:enrichment-db": "bun --conditions=react-server scripts/enrichment-db-integration.ts",
     "test:assessment-db": "bun --conditions=react-server scripts/assessment-db-integration.ts",

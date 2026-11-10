@@ -59,6 +59,16 @@ function currentRepository(id: string): GitHubRepository {
 
 function githubResponse(id: string) {
   const repo = currentRepository(id);
+  const originalResponse = {
+    id: Number(id), node_id: `R_${id}`, name: `repo-${id}`, full_name: `acme/repo-${id}`,
+    owner: { id: 1, node_id: "O_1", login: "acme" }, html_url: repo.canonicalUrl,
+    url: `https://api.github.com/repos/acme/repo-${id}`, description: "A current description.",
+    homepage: null, topics: ["developer-tools"], language: "TypeScript", stargazers_count: 2,
+    forks_count: 0, watchers_count: 2, open_issues_count: 0, archived: false, disabled: false,
+    fork: false, private: false, visibility: "public", default_branch: "main",
+    created_at: "2024-01-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z", pushed_at: "2026-11-01T00:00:00Z",
+    license: { key: "mit", name: "MIT License", spdx_id: "MIT", url: null, html_url: null },
+  };
   return {
     kind: "ok" as const,
     data: repo,
@@ -70,16 +80,8 @@ function githubResponse(id: string) {
       fetchedAt: "2026-11-09T20:05:00Z",
       httpStatus: 200,
       apiVersion: "2022-11-28" as const,
-      parsedResponseData: {
-        id: Number(id), node_id: `R_${id}`, name: `repo-${id}`, full_name: `acme/repo-${id}`,
-        owner: { id: 1, node_id: "O_1", login: "acme" }, html_url: repo.canonicalUrl,
-        url: `https://api.github.com/repos/acme/repo-${id}`, description: "A current description.",
-        homepage: null, topics: ["developer-tools"], language: "TypeScript", stargazers_count: 2,
-        forks_count: 0, watchers_count: 2, open_issues_count: 0, archived: false, disabled: false,
-        fork: false, private: false, visibility: "public", default_branch: "main",
-        created_at: "2024-01-01T00:00:00Z", updated_at: "2026-11-01T00:00:00Z", pushed_at: "2026-11-01T00:00:00Z",
-        license: { key: "mit", name: "MIT License", spdx_id: "MIT", url: null, html_url: null },
-      },
+      parsedResponseData: repo,
+      originalResponseData: originalResponse,
     },
   };
 }
@@ -96,6 +98,7 @@ function fakeDatabase(start: Record<string, unknown> = {}, commitError = false, 
       if (name === "heartbeat_catalog_import") return heartbeatError
         ? { data: null, error: { code: "40001", message: "stale lease" } }
         : { data: "2026-11-09T20:15:00Z", error: null };
+      if (name === "catalog_import_exclusions") return { data: [], error: null };
       if (name === "commit_catalog_import_batch") {
         if (commitError) return { data: null, error: { code: "23514", message: "transaction rolled back" } };
         const argsObject = args ?? {};
@@ -138,9 +141,36 @@ describe("catalog import execution", () => {
     const batchCall = calls.find(({ name }) => name === "commit_catalog_import_batch")!;
     const batchItem = (batchCall.args?.p_records as Array<Record<string, unknown>>)[0]!;
     expect(batchItem.import_candidate).toBe(true);
+    expect(batchItem.github_response).toMatchObject({ full_name: "acme/repo-123456", private: false, visibility: "public" });
+    expect(batchItem.github_response).not.toHaveProperty("fullName");
     expect(batchItem.provenance).toMatchObject({ http_status: 200, fetched_at: "2026-11-09T20:05:00Z" });
     expect(report.review_records[0]?.database_result).toBe("created_candidate");
     expect(report.checkpoint).toMatchObject({ status: "succeeded" });
+  });
+
+  it("excludes restricted repositories without placing repository metadata in reports or the commit payload", async () => {
+    const { db, calls } = fakeDatabase();
+    const response = githubResponse("123456");
+    response.data.isPrivate = true;
+    response.data.visibility = source("private");
+    response.data.description = source("Sensitive private project description.");
+    const raw = response.provenance.originalResponseData as Record<string, unknown>;
+    raw.private = true;
+    raw.visibility = "private";
+    raw.description = "Sensitive private project description.";
+    const report = await executeCatalogImport(validation([candidate()]), options, {
+      database: db,
+      github: { getRepositoryById: async () => response } as never,
+      now,
+    });
+    const batchItem = (calls.find(({ name }) => name === "commit_catalog_import_batch")?.args?.p_records as Array<Record<string, unknown>>)[0]!;
+    expect(batchItem.import_candidate).toBe(false);
+    expect(batchItem.github_response).toBeNull();
+    expect(batchItem.source_candidate).toEqual({ schema_version: 1, github_repository_id: "123456" });
+    expect(JSON.stringify(batchItem.verification)).not.toContain("Sensitive private");
+    expect(report.review_records[0]?.source_candidate).toEqual({ github_repository_id: "123456" });
+    expect(JSON.stringify(report.review_records[0])).not.toContain("Sensitive private");
+    expect(report.review_records[0]).toMatchObject({ status: "rejected_or_excluded", observed_at: "2026-11-09T20:05:00Z" });
   });
 
   it("does not fetch GitHub again when the same import is already complete", async () => {
@@ -152,7 +182,7 @@ describe("catalog import execution", () => {
       now,
     });
     expect(requests).toBe(0);
-    expect(calls.map(({ name }) => name)).toEqual(["start_catalog_import"]);
+    expect(calls.map(({ name }) => name)).toEqual(["start_catalog_import", "catalog_import_exclusions"]);
     expect(report.checkpoint).toMatchObject({ already_complete: true });
   });
 

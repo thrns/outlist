@@ -29,6 +29,9 @@ export class GitHubApiError extends Error {
       rateLimit?: GitHubRateLimit;
       requestId?: string;
       diagnostic?: string;
+      sourceApiUrl?: string;
+      fetchedAt?: string;
+      httpStatus?: number;
     } = {},
   ) {
     super(message);
@@ -56,6 +59,18 @@ export class GitHubApiError extends Error {
 
   get diagnostic(): string | undefined {
     return this.options.diagnostic;
+  }
+
+  get sourceApiUrl(): string | undefined {
+    return this.options.sourceApiUrl;
+  }
+
+  get fetchedAt(): string | undefined {
+    return this.options.fetchedAt;
+  }
+
+  get httpStatus(): number | undefined {
+    return this.options.httpStatus;
   }
 }
 

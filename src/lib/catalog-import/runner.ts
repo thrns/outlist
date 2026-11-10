@@ -41,8 +41,9 @@ export type ImportAttempt = {
   required_follow_up: string[];
   license: CatalogReviewReportItem["license"];
   evidence: CatalogReviewReportItem["evidence"];
-  source_candidate: CatalogCandidateRecord;
+  source_candidate: CatalogCandidateRecord | Pick<CatalogCandidateRecord, "github_repository_id">;
   database_result?: "created_candidate" | "existing_candidate" | "existing_repository" | "excluded";
+  observed_at?: string;
 };
 
 export type CatalogImportReport = {
@@ -116,7 +117,7 @@ export function makeOfflineImportReport(validation: CatalogArchiveValidation, no
       repository_candidates_created_this_invocation: null,
       ingestion_items_created_this_invocation: null,
       per_candidate_mapping: [
-        "public.source_records: one validated GET /repositories/{id} response; its parsed response and actual fetched_at are stored only for a newly queued candidate.",
+        "public.source_records: one schema-validated original JSON response from GET /repositories/{id}; its provider-shaped payload and actual fetched_at are stored only for a newly queued public candidate.",
         "public.repository_candidates: queued from the current GitHub stable ID, owner, repository name, and canonical URL; existing identity rows are never updated.",
         "public.ingestion_items.result: original candidate JSON, archive SHA-256, source batch and line, safely mapped category ID, resolved proposed slug, and review evidence.",
         "public.ingestion_jobs: one catalog_import job with sequential batch hashes, counters, and a lease-fenced resume checkpoint.",
@@ -188,25 +189,93 @@ function requiredRpcResult<T>(result: DbResult, stage: string): T {
   return result.data as T;
 }
 
-function repoSourceRecord(record: CatalogCandidateRecord, result: Awaited<ReturnType<NonNullable<CatalogImportGitHub>["getRepositoryById"]>>) {
+type RepositoryResponse = Awaited<ReturnType<NonNullable<CatalogImportGitHub>["getRepositoryById"]>>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function safeRepositoryProvenance(result: Extract<RepositoryResponse, { kind: "ok" }>) {
+  return {
+    source_url: result.provenance.sourceApiUrl,
+    stable_resource_identity: result.provenance.stableResourceIdentity,
+    fetched_at: result.provenance.fetchedAt,
+    http_status: result.provenance.httpStatus,
+    api_version: result.provenance.apiVersion,
+  };
+}
+
+function repoSourceRecord(record: CatalogCandidateRecord, result: RepositoryResponse) {
   if (result.kind !== "ok") throw new Error("A catalog preflight cannot reuse a not-modified response.");
+  const original = result.provenance.originalResponseData;
+  if (!isObject(original)
+    || original.id !== result.data.id
+    || String(original.id) !== record.github_repository_id
+    || original.full_name !== result.data.fullName
+    || original.name !== result.data.name
+    || isObject(original.owner) === false
+    || original.owner.login !== result.data.owner.login
+    || original.private !== false
+    || original.disabled !== false
+    || String(original.visibility).toLowerCase() !== "public") {
+    throw new Error("GitHub did not provide a schema-validated original public repository response.");
+  }
   return {
     source_candidate: withoutSourceLocation(record),
     source_batch: record.source_batch,
     source_line: record.source_line,
     import_candidate: true,
     verification: null,
-    github_response: result.provenance.parsedResponseData,
-    provenance: {
-      source_url: result.provenance.sourceApiUrl,
-      stable_resource_identity: result.provenance.stableResourceIdentity,
-      fetched_at: result.provenance.fetchedAt,
-      http_status: result.provenance.httpStatus,
-      api_version: result.provenance.apiVersion,
-      ...(result.provenance.etag ? { etag: result.provenance.etag } : {}),
-    },
+    github_response: original,
+    provenance: safeRepositoryProvenance(result),
   };
 }
+
+function safeExcludedAttempt(record: CatalogCandidateRecord, code: string, fetchedAt?: string): ImportAttempt {
+  const explanation = code === "not_publicly_available"
+    ? "Current GitHub metadata indicates that public availability could not be confirmed."
+    : "GitHub did not provide a publicly verifiable repository response.";
+  const attempt: ImportAttempt = {
+    github_repository_id: record.github_repository_id,
+    source_batch: record.source_batch,
+    source_line: record.source_line,
+    status: "rejected_or_excluded",
+    recommendation: "exclude",
+    imported_into_candidate_queue: false,
+    reasons: [{ code, explanation, evidence: ["github_repository_id", "github_visibility"] }],
+    required_follow_up: [],
+    license: {
+      reported_identifier: null,
+      github_evidence_available: false,
+      review_status: "not_assessed",
+      legal_verification_granted: false,
+    },
+    evidence: { archive_claims: {}, current_repository: null, assessment: null },
+    source_candidate: { github_repository_id: record.github_repository_id },
+    ...(fetchedAt && Number.isFinite(Date.parse(fetchedAt)) ? { observed_at: fetchedAt } : {}),
+  };
+  return attempt;
+}
+
+function safeErrorProvenance(error: GitHubApiError, repositoryId: string) {
+  if (!error.fetchedAt || !error.sourceApiUrl || !error.httpStatus) return null;
+  const expectedUrl = `https://api.github.com/repositories/${repositoryId}`;
+  if (error.sourceApiUrl !== expectedUrl || !Number.isFinite(Date.parse(error.fetchedAt))) return null;
+  return {
+    source_url: error.sourceApiUrl,
+    stable_resource_identity: `github:repository:${repositoryId}`,
+    fetched_at: error.fetchedAt,
+    http_status: error.httpStatus,
+    api_version: "2022-11-28",
+  };
+}
+
+type StoredCatalogExclusion = {
+  repository_id: string;
+  classification: "rejected_or_excluded";
+  reason_codes: string[];
+  observed_at: string;
+};
 
 function withoutSourceLocation(record: CatalogCandidateRecord) {
   const { source_batch, source_line, source_batch_path, ...candidate } = record;
@@ -235,11 +304,14 @@ function failedAttempt(record: CatalogCandidateRecord, error: unknown, now: Date
     { code, explanation, evidence: ["github_api_request", "catalog.github_repository_id"] },
   ];
   const status = code === "github_access_not_publicly_verified" ? "rejected_or_excluded" as const : "requires_manual_review" as const;
+  if (status === "rejected_or_excluded") {
+    return safeExcludedAttempt(record, code, error instanceof GitHubApiError ? error.fetchedAt : undefined);
+  }
   return {
     ...toAttempt(record, {
       ...review,
       status,
-      recommendation: status === "rejected_or_excluded" ? "exclude" : "manual_review_required",
+      recommendation: "manual_review_required",
       reasons: reviewReasons,
       required_follow_up: [...new Set([...review.required_follow_up, code.endsWith("retryable") ? "retry_github_verification" : "manually_review_source_availability"])],
     }),
@@ -247,15 +319,23 @@ function failedAttempt(record: CatalogCandidateRecord, error: unknown, now: Date
   };
 }
 
-function commitPayload(record: CatalogCandidateRecord, review: CatalogReviewReportItem | ImportAttempt, response: ReturnType<typeof repoSourceRecord> | null, shouldImport: boolean) {
+function commitPayload(
+  record: CatalogCandidateRecord,
+  review: CatalogReviewReportItem | ImportAttempt,
+  response: ReturnType<typeof repoSourceRecord> | null,
+  shouldImport: boolean,
+  excludedProvenance: ReturnType<typeof safeErrorProvenance> | ReturnType<typeof safeRepositoryProvenance> | null = null,
+) {
   return {
-    source_candidate: withoutSourceLocation(record),
+    source_candidate: shouldImport
+      ? withoutSourceLocation(record)
+      : { schema_version: 1, github_repository_id: record.github_repository_id },
     source_batch: record.source_batch,
     source_line: record.source_line,
     import_candidate: shouldImport,
     verification: review,
-    github_response: response?.github_response ?? null,
-    provenance: response?.provenance ?? null,
+    github_response: shouldImport ? response?.github_response ?? null : null,
+    provenance: shouldImport ? response?.provenance ?? null : excludedProvenance,
   };
 }
 
@@ -299,6 +379,24 @@ export async function executeCatalogImport(
   const stopBefore = Math.min(batches.length + 1, startNumber + options.maxBatches);
   let committed = 0;
   try {
+    if (options.resume || response.already_complete) {
+      const exclusions = requiredRpcResult<StoredCatalogExclusion[]>(await database.rpc("catalog_import_exclusions", {
+        p_job_id: response.job_id,
+      }), "catalog import exclusion report");
+      if (!Array.isArray(exclusions)) throw new Error("Database returned invalid catalog import exclusions.");
+      const recordsById = new Map(validation.records.map((record) => [record.github_repository_id, record]));
+      for (const exclusion of exclusions) {
+        const record = recordsById.get(exclusion.repository_id);
+        if (!record || exclusion.classification !== "rejected_or_excluded" || !Number.isFinite(Date.parse(exclusion.observed_at))) {
+          throw new Error("Database returned an unmatched or invalid catalog exclusion identity.");
+        }
+        const knownReason = exclusion.reason_codes.find((code) => [
+          "not_publicly_available", "repository_id_mismatch", "github_access_not_publicly_verified",
+        ].includes(code));
+        const attempt = safeExcludedAttempt(record, knownReason ?? "github_access_not_publicly_verified", exclusion.observed_at);
+        attempts.set(record.github_repository_id, { ...attempt, database_result: "excluded" });
+      }
+    }
     if (!response.already_complete) {
       for (const batch of batches) {
         if (batch.number < startNumber || batch.number >= stopBefore) continue;
@@ -319,7 +417,7 @@ export async function executeCatalogImport(
             const attempt = failedAttempt(candidate, error, now());
             attempts.set(candidate.github_repository_id, attempt);
             if (error instanceof GitHubApiError && (error.kind === "not_found" || error.kind === "forbidden")) {
-              batchPayload.push(commitPayload(candidate, attempt, null, false));
+              batchPayload.push(commitPayload(candidate, attempt, null, false, safeErrorProvenance(error, candidate.github_repository_id)));
               continue;
             }
             report.review_records = [...attempts.values()];
@@ -339,12 +437,21 @@ export async function executeCatalogImport(
           };
           const review = reviewCatalogCandidate(candidate, current, null, now());
           const importCandidate = review.status !== "rejected_or_excluded";
-          const mappedResponse = repoSourceRecord(candidate, currentResponse);
-          batchPayload.push(commitPayload(candidate, review, mappedResponse, importCandidate));
-          attempts.set(candidate.github_repository_id, {
-            ...toAttempt(candidate, review),
-            imported_into_candidate_queue: importCandidate,
-          });
+          if (!importCandidate) {
+            const code = review.reasons.some((reason) => reason.code === "repository_id_mismatch")
+              ? "repository_id_mismatch"
+              : "not_publicly_available";
+            const attempt = safeExcludedAttempt(candidate, code, currentResponse.provenance.fetchedAt);
+            batchPayload.push(commitPayload(candidate, attempt, null, false, safeRepositoryProvenance(currentResponse)));
+            attempts.set(candidate.github_repository_id, attempt);
+          } else {
+            const mappedResponse = repoSourceRecord(candidate, currentResponse);
+            batchPayload.push(commitPayload(candidate, review, mappedResponse, true));
+            attempts.set(candidate.github_repository_id, {
+              ...toAttempt(candidate, review),
+              imported_into_candidate_queue: true,
+            });
+          }
         }
         const commit = requiredRpcResult<{ next_batch_number: number; imported: number; existing: number; excluded: number; results?: Array<{ github_repository_id: string; result: ImportAttempt["database_result"] }> }>(
           await database.rpc("commit_catalog_import_batch", {

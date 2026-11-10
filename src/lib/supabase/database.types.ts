@@ -729,6 +729,9 @@ isOneToOne: false
 "begin_github_repository_assessment_recovery":
 { Args: { "p_job_id": string,"p_max_assessments": number,"p_worker_id": string }; Returns: Json
                            },
+"catalog_import_exclusions":
+{ Args: { "p_job_id": string }; Returns: Json
+                           },
 "catalog_import_status":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },

@@ -108,6 +108,16 @@ jobs:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
           SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
           bun run test:public-search-db
+      - name: Exercise catalog import, private-data redaction, and recovery against local Supabase
+        run: |
+          # The real importer writes only to a fresh disposable local database.
+          bun run supabase db reset
+          eval "$(./node_modules/.bin/supabase status -o env)"
+          NEXT_PUBLIC_SUPABASE_URL="$API_URL" \
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$ANON_KEY" \
+          SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY" \
+          OUTLIST_SUPABASE_ENVIRONMENT=local \
+          bun run test:catalog-import-db
       - name: Lint database functions
         run: bun run supabase db lint --schema public,private --fail-on error
       - name: Verify launch database security boundaries
