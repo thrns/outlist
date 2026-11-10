@@ -110,7 +110,7 @@ select is((select result->'results'->1->>'github_repository_id' from catalog_imp
 select is((select result->'catalog_import'->>'resolved_slug' from public.ingestion_items
   where job_id = (select job_id from catalog_import_job) and item_key = 'github:99110002'),
   'same-title-99110002', 'a slug collision receives a deterministic repository-ID suffix');
-select is((select result->>'idempotent_replay' from public.commit_catalog_import_batch(
+select is((select public.commit_catalog_import_batch(
   (select job_id from catalog_import_job), 'catalog-test-worker', (select lease_token from catalog_import_job),
   1, 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   (select jsonb_agg(jsonb_build_object(
@@ -123,7 +123,7 @@ select is((select result->>'idempotent_replay' from public.commit_catalog_import
     'provenance', i.result->'catalog_import'->'provenance'
   ) order by (i.result->'catalog_import'->>'batch_line')::integer)
     from public.ingestion_items i where i.job_id = (select job_id from catalog_import_job))
-)), 'true', 'replaying the committed batch hash is idempotent');
+)->>'idempotent_replay'), 'true', 'replaying the committed batch hash is idempotent');
 select is((select description from public.repository_candidates where provider_repository_id = '99110003'),
   'Human reviewed candidate note', 'existing candidate description is never overwritten');
 select is((select review_status from public.repository_candidates where provider_repository_id = '99110003'),

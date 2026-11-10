@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(20);
 
 set local "request.jwt.claims" = '{"role":"anon"}';
 select throws_ok(
