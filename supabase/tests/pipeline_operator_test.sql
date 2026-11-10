@@ -1,5 +1,5 @@
 begin;
-select plan(20);
+select plan(21);
 
 set local "request.jwt.claims" = '{"role":"anon"}';
 select throws_ok(
@@ -101,7 +101,7 @@ create temporary table pipeline_report_call as
 select public.pipeline_operator_report() as report;
 select is((select report->>'report_version' from pipeline_report_call), 'm2-05-v1',
   'service role receives the versioned operational report');
-select is((select count(*)::integer from jsonb_array_elements(pipeline_report_call.report->'schema'->'required_rpcs') rpc
+select is((select count(*)::integer from jsonb_array_elements((select report from pipeline_report_call)->'schema'->'required_rpcs') rpc
   where rpc->>'signature' like 'public.%catalog_import%'
     and (rpc->>'exists')::boolean and (rpc->>'service_role_execute')::boolean), 5,
   'all catalog import checkpoint RPCs exist and remain service-role-only');

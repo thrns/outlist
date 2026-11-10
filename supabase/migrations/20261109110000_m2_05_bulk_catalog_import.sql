@@ -433,10 +433,9 @@ begin
     if v_source_record_id is null then raise exception 'source provenance row was not persisted' using errcode = '23502'; end if;
 
     insert into public.repository_candidates (
-      provider, provider_repository_id, full_name, canonical_url, source_record_id, source_metadata
+      provider, provider_repository_id, full_name, canonical_url, source_record_id
     ) values (
-      'github', v_id, v_full_name, v_url, v_source_record_id,
-      jsonb_build_object('catalog_import_archive_sha256', v_archive_sha, 'source_batch', (v_item->>'source_batch')::integer)
+      'github', v_id, v_full_name, v_url, v_source_record_id
     ) on conflict (provider, provider_repository_id) do nothing
     returning id into v_candidate_id;
     if v_candidate_id is null then

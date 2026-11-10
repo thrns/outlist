@@ -14,11 +14,11 @@ insert into public.source_records (
   clock_timestamp(), 200, '{"id":99110003}'::jsonb, '{"validated":true}'::jsonb
 );
 insert into public.repository_candidates (
-  provider, provider_repository_id, full_name, canonical_url, source_record_id, source_metadata
+  provider, provider_repository_id, full_name, canonical_url, source_record_id, description, review_status
 ) values (
   'github', '99110003', 'human/existing', 'https://github.com/human/existing',
   (select id from public.source_records where source_key = 'github:repository:99110003'),
-  '{"human_note":"preserve this"}'::jsonb
+  'Human reviewed candidate note', 'accepted'
 );
 insert into public.repositories (provider, provider_repository_id, full_name, canonical_url)
 values ('github', '99110005', 'human/repository', 'https://github.com/human/repository');
@@ -124,8 +124,10 @@ select is((select result->>'idempotent_replay' from public.commit_catalog_import
   ) order by (i.result->'catalog_import'->>'batch_line')::integer)
     from public.ingestion_items i where i.job_id = (select job_id from catalog_import_job))
 )), 'true', 'replaying the committed batch hash is idempotent');
-select is((select source_metadata->>'human_note' from public.repository_candidates where provider_repository_id = '99110003'),
-  'preserve this', 'existing editorial metadata is never overwritten');
+select is((select description from public.repository_candidates where provider_repository_id = '99110003'),
+  'Human reviewed candidate note', 'existing candidate description is never overwritten');
+select is((select review_status from public.repository_candidates where provider_repository_id = '99110003'),
+  'accepted', 'existing candidate editorial review state is never overwritten');
 select is((select full_name from public.repositories where provider_repository_id = '99110005'),
   'human/repository', 'existing repository identity is never renamed by catalog input');
 select is((select count(*)::integer from public.repository_candidates where provider_repository_id = '99110005'), 0,
