@@ -103,8 +103,8 @@ select is((select report->>'report_version' from pipeline_report_call), 'm2-05-v
   'service role receives the versioned operational report');
 select is((select count(*)::integer from jsonb_array_elements((select report from pipeline_report_call)->'schema'->'required_rpcs') rpc
   where rpc->>'signature' like 'public.%catalog_import%'
-    and (rpc->>'exists')::boolean and (rpc->>'service_role_execute')::boolean), 5,
-  'all catalog import checkpoint RPCs exist and remain service-role-only');
+    and (rpc->>'exists')::boolean and (rpc->>'service_role_execute')::boolean), 6,
+  'all catalog import checkpoint and safe exclusion RPCs exist and remain service-role-only');
 select is((select public.pipeline_operator_verify_run(gen_random_uuid())->>'pipeline_run_id' is not null), true,
   'service role can call bounded run-scoped persisted-row inspection');
 select is((public.pipeline_operator_verify_resume(gen_random_uuid())->>'resume_mode')::boolean, true,
