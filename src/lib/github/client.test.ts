@@ -149,14 +149,32 @@ describe("GitHub REST adapter", () => {
     }
   });
 
-  it("retrieves by numeric repository ID", async () => {
+  it("retrieves by numeric repository ID with distinct normalized and original validated payloads", async () => {
+    const originalResponse = { ...repositoryFixture, response_extension: { provider_value: "preserved" } };
     const mock = mockFetch((url) => {
       expect(url.pathname).toBe(`/repositories/${repositoryFixture.id}`);
-      return repoResponse();
+      return repoResponse(originalResponse);
     });
-    const result = await client(mock.fetch).getRepositoryById(repositoryFixture.id);
+    const result = await client(mock.fetch, { now: () => Date.parse("2026-11-09T20:05:00.000Z") }).getRepositoryById(repositoryFixture.id);
     expect(result.kind).toBe("ok");
     expect(mock.calls[0].url).toBe(`https://api.github.com/repositories/${repositoryFixture.id}`);
+    if (result.kind === "ok") {
+      expect(result.provenance.parsedResponseData).toEqual(result.data);
+      expect(result.provenance.originalResponseData).toEqual(originalResponse);
+      expect(result.provenance.parsedResponseData).not.toHaveProperty("response_extension");
+      expect(result.provenance.fetchedAt).toBe("2026-11-09T20:05:00.000Z");
+    }
+  });
+
+  it("attaches only safe request provenance to unavailable repository errors", async () => {
+    const mock = mockFetch(response({ message: "Not Found" }, 404));
+    await expect(client(mock.fetch, { now: () => Date.parse("2026-11-09T20:05:00.000Z") })
+      .getRepositoryById(repositoryFixture.id)).rejects.toMatchObject({
+      kind: "not_found",
+      sourceApiUrl: `https://api.github.com/repositories/${repositoryFixture.id}`,
+      fetchedAt: "2026-11-09T20:05:00.000Z",
+      httpStatus: 404,
+    });
   });
 
   it("parses language bytes, topics, license metadata, and release fields", async () => {

@@ -139,10 +139,21 @@ async function insertCandidate(db: TestDatabase, id: number, marker: string) {
   }).select("id").single(), "Create assessment candidate");
 }
 
-async function runAssessment(admin: ReturnType<typeof createSupabaseAdminClient>, max: number) {
+async function runAssessment(admin: ReturnType<typeof createSupabaseAdminClient>, max: number, completionResults?: unknown[]) {
   const output: string[] = []; const errors: string[] = [];
+  const supabase = completionResults ? new Proxy(admin, {
+    get(target, property, receiver) {
+      if (property === "rpc") return async (name: string, args: Record<string, unknown>) => {
+        const result = await target.rpc(name as never, args as never) as unknown as DbResult;
+        if (name === "complete_github_repository_assessment") completionResults.push(result.data);
+        return result;
+      };
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) : admin;
   const deps: AssessmentCliDependencies = {
-    supabase: admin as unknown as NonNullable<AssessmentCliDependencies["supabase"]>,
+    supabase: supabase as unknown as NonNullable<AssessmentCliDependencies["supabase"]>,
     writeStdout: (line) => output.push(line), writeStderr: (line) => errors.push(line),
     now: () => new Date("2026-11-06T12:00:00.000Z"),
   };
@@ -193,9 +204,16 @@ async function main() {
   const enrichmentTwo = await runEnrichment(admin, idTwo, secondTime, false);
   assert(enrichmentOne.includes('"enriched":1') && enrichmentTwo.includes('"enriched":1'), "Both complete fixtures must be enriched successfully.");
 
-  const events = await runAssessment(admin, 2);
+  const nonCatalogCompletionResults: unknown[] = [];
+  const events = await runAssessment(admin, 2, nonCatalogCompletionResults);
   const summary = events.find((event) => event.event === "assessment_summary");
   assert(summary && summary.assessed === 2 && summary.drafted === 2 && summary.queued_for_review === 2, "The bounded assessment run should create two reviewable drafts.");
+  assert(nonCatalogCompletionResults.length === 2 && nonCatalogCompletionResults.every((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const result = value as Row;
+    return Object.keys(result).sort().join(",") === "drafted,project_id,review_queue_id,status"
+      && result.publication_status === undefined;
+  }), "Non-catalog assessments retain the prior completion RPC result shape.");
   const projects = await rows<Row>(db.from("projects").select("id,slug,name,summary,description,primary_repository_id,publication_status,quality_status,license_status,license_verified_at,published_at,featured"), "Read assessment drafts");
   const created = projects.filter((project) => project.slug === `github-${idOne}` || project.slug === `github-${idTwo}`);
   assert(created.length === 2, "Assessment should create exactly one project per canonical repository.");

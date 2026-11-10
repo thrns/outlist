@@ -189,6 +189,9 @@ export class GitHubClient {
       },
       options,
       repositoryIdentity(repositoryId),
+      undefined,
+      undefined,
+      true,
     );
     if (response.result.kind === "ok") this.#rememberRepository(response.result.data);
     return response.result;
@@ -443,6 +446,7 @@ export class GitHubClient {
     identity: string | ((data: TData) => string),
     onNotFound?: () => TData,
     notModifiedIdentity?: string,
+    includeOriginalResponse = false,
   ): Promise<InternalRequestResult<TData>> {
     const { response, body } = await this.#fetchResponse(url, options);
     const rateLimit = parseRateLimitHeaders(response.headers, this.#now());
@@ -483,7 +487,15 @@ export class GitHubClient {
       return { result: { kind: "ok", data, provenance }, linkHeader: response.headers.get("link") ?? undefined };
     }
 
-    if (!response.ok) throw await this.#responseError(response, body, rateLimit);
+    if (!response.ok) {
+      const error = await this.#responseError(response, body, rateLimit);
+      throw new GitHubApiError(error.kind, error.message, {
+        ...error.options,
+        sourceApiUrl,
+        fetchedAt,
+        httpStatus: response.status,
+      });
+    }
     const contentType = response.headers.get("content-type") ?? "";
     if (!isJsonContentType(contentType)) {
       throw new GitHubApiError("unexpected_content_type", "GitHub returned a non-JSON response for a JSON endpoint.", {
@@ -523,6 +535,9 @@ export class GitHubClient {
       ...(etag ? { etag } : {}),
       ...(rateLimit ? { rateLimit } : {}),
       apiVersion: GITHUB_API_VERSION,
+      // Keep the exact provider-shaped JSON object from this response. The
+      // endpoint schema and resource-specific transform have both validated it.
+      ...(includeOriginalResponse ? { originalResponseData: json } : {}),
       parsedResponseData: data,
     };
     return {

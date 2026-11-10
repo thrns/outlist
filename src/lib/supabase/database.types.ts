@@ -157,14 +157,14 @@ isOneToOne: false
                   ]
                 },"ingestion_jobs": {
                   Row: {
-                    "created_at": string,"error_summary": string | null,"finished_at": string | null,"id": string,"items_created": number,"items_discovered": number,"items_failed": number,"items_processed": number,"items_skipped": number,"items_updated": number,"job_type": string,"metadata": NonNullable<Json>,"provider": string | null,"started_at": string | null,"status": string,"updated_at": string
+                    "catalog_import_lease_expires_at": string | null,"catalog_import_lease_token": string | null,"created_at": string,"error_summary": string | null,"finished_at": string | null,"id": string,"items_created": number,"items_discovered": number,"items_failed": number,"items_processed": number,"items_skipped": number,"items_updated": number,"job_type": string,"metadata": NonNullable<Json>,"provider": string | null,"started_at": string | null,"status": string,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"error_summary"?: string | null,"finished_at"?: string | null,"id"?: string,"items_created"?: number,"items_discovered"?: number,"items_failed"?: number,"items_processed"?: number,"items_skipped"?: number,"items_updated"?: number,"job_type": string,"metadata"?: NonNullable<Json>,"provider"?: string | null,"started_at"?: string | null,"status"?: string,"updated_at"?: string
+                    "catalog_import_lease_expires_at"?: string | null,"catalog_import_lease_token"?: string | null,"created_at"?: string,"error_summary"?: string | null,"finished_at"?: string | null,"id"?: string,"items_created"?: number,"items_discovered"?: number,"items_failed"?: number,"items_processed"?: number,"items_skipped"?: number,"items_updated"?: number,"job_type": string,"metadata"?: NonNullable<Json>,"provider"?: string | null,"started_at"?: string | null,"status"?: string,"updated_at"?: string
                   }
                   Update: {
-                    "created_at"?: string,"error_summary"?: string | null,"finished_at"?: string | null,"id"?: string,"items_created"?: number,"items_discovered"?: number,"items_failed"?: number,"items_processed"?: number,"items_skipped"?: number,"items_updated"?: number,"job_type"?: string,"metadata"?: NonNullable<Json>,"provider"?: string | null,"started_at"?: string | null,"status"?: string,"updated_at"?: string
+                    "catalog_import_lease_expires_at"?: string | null,"catalog_import_lease_token"?: string | null,"created_at"?: string,"error_summary"?: string | null,"finished_at"?: string | null,"id"?: string,"items_created"?: number,"items_discovered"?: number,"items_failed"?: number,"items_processed"?: number,"items_skipped"?: number,"items_updated"?: number,"job_type"?: string,"metadata"?: NonNullable<Json>,"provider"?: string | null,"started_at"?: string | null,"status"?: string,"updated_at"?: string
                   }
                   Relationships: [
                     
@@ -729,6 +729,12 @@ isOneToOne: false
 "begin_github_repository_assessment_recovery":
 { Args: { "p_job_id": string,"p_max_assessments": number,"p_worker_id": string }; Returns: Json
                            },
+"catalog_import_exclusions":
+{ Args: { "p_job_id": string }; Returns: Json
+                           },
+"catalog_import_status":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
 "claim_discovery_partitions":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
               "cursor": Json,"id": string,"incomplete_results": boolean,"lease_expires_at": string,"lease_token": string,"partition_key": string,"query_fingerprint": string,"query_parameters": Json,"query_text": string,"total_count": number
@@ -755,6 +761,9 @@ isOneToOne: false
 "claim_project_logo_cleanup":
 { Args: { "p_approval_token": string,"p_logo_id": string,"p_worker_id": string }; Returns: Json
                            },
+"commit_catalog_import_batch":
+{ Args: { "p_batch_number": number,"p_batch_sha256": string,"p_job_id": string,"p_lease_token": string,"p_records": Json,"p_worker_id": string }; Returns: Json
+                           },
 "commit_discovery_page":
 { Args: { "p_candidates": Json,"p_children"?: Json,"p_fetched_at": string,"p_http_status": number,"p_incomplete_results": boolean,"p_lease_seconds"?: number,"p_lease_token": string,"p_next_state": string,"p_page": number,"p_per_page": number,"p_query_fingerprint": string,"p_query_id": string,"p_source_metadata": Json,"p_source_url": string,"p_total_count": number,"p_worker_id": string }; Returns: Json
                            },
@@ -773,6 +782,9 @@ isOneToOne: false
 "fail_github_repository_enrichment":
 { Args: { "p_candidate_id": string,"p_error_summary": string,"p_failure_provenance"?: Json,"p_lease_token": string,"p_retry_after_ms"?: number,"p_retryable": boolean,"p_worker_id": string }; Returns: Json
                            },
+"finish_catalog_import":
+{ Args: { "p_error_summary"?: string,"p_job_id": string,"p_lease_token": string,"p_worker_id": string }; Returns: Json
+                           },
 "finish_discovery_job":
 { Args: { "p_error_summary"?: string,"p_job_id": string,"p_status": string }; Returns: undefined
                            },
@@ -788,6 +800,9 @@ isOneToOne: false
 "get_public_catalog_facets":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
+"heartbeat_catalog_import":
+{ Args: { "p_job_id": string,"p_lease_token": string,"p_worker_id": string }; Returns: string
+                           },
 "list_project_logo_cleanup_attempts":
 { Args: { "p_logo_id": string }; Returns: Json
                            },
@@ -795,6 +810,9 @@ isOneToOne: false
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
 "pipeline_operator_report_m2_04_previous":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"pipeline_operator_report_m2_05_previous":
 { Args: Record<PropertyKey, never>; Returns: Json
                            },
 "pipeline_operator_report_v1":
@@ -823,6 +841,9 @@ isOneToOne: false
                            },
 "set_project_logo_review_status":
 { Args: { "p_logo_id": string,"p_status": string }; Returns: Json
+                           },
+"start_catalog_import":
+{ Args: { "p_archive_sha256": string,"p_environment": string,"p_lease_token": string,"p_project_ref": string,"p_resume": boolean,"p_total_batches": number,"p_total_candidates": number,"p_worker_id": string }; Returns: Json
                            },
 "start_discovery_job":
 { Args: { "p_partitions": Json,"p_plan_name": string,"p_plan_version": string }; Returns: string
