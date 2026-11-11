@@ -27,6 +27,8 @@
     "logos": "bun --conditions=react-server scripts/logos.ts",
     "pipeline": "bun --conditions=react-server scripts/pipeline.ts",
     "catalog:import": "bun --conditions=react-server scripts/catalog-import.ts",
+    "catalog:review": "bun --conditions=react-server scripts/catalog-review/cli.ts",
+    "catalog:publish": "bun --conditions=react-server scripts/catalog-review/publish.ts",
     "recover:assessment": "bun --conditions=react-server scripts/recover-assessment.ts",
     "launch:preflight": "bun --conditions=react-server scripts/launch-preflight.ts",
     "test:launch-preflight-db": "bun --conditions=react-server scripts/launch-preflight-db-integration.ts",

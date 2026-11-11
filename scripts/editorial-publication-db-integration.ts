@@ -281,36 +281,26 @@ async function runPublicRecovery(providerRepositoryId: string, candidateId: stri
 }
 
 async function primePublicationEligibilityAudit(projectId: string, actorUserId: string, observedAt: string) {
-  const decisionAt = new Date().toISOString();
-  await must(service.from("projects").update({
-    license_status: "verified_open_source",
-    license_identifier: "MIT",
-    license_verified_at: decisionAt,
-    quality_status: "verified",
-    last_verified_at: decisionAt,
-  }).eq("id", projectId), "Prepare publication-gate fixture statuses");
-  await must(service.from("editorial_decisions").insert([
-    {
-      project_id: projectId,
-      actor_user_id: actorUserId,
-      action: "verify_license",
-      previous_state: "unverified",
-      resulting_state: "verified_open_source",
-      evidence: { license_identifier: "MIT", evidence_reference: "https://opensource.org/license/mit", human_confirmed_open_source: true, source_observed_at: observedAt },
-      reason: "Test fixture seeds the earlier license gate to isolate publication evidence checks.",
-      resulting_revision: 0,
-    },
-    {
-      project_id: projectId,
-      actor_user_id: actorUserId,
-      action: "verify_quality",
-      previous_state: "unreviewed",
-      resulting_state: "verified",
-      evidence: { human_reviewed_current_repository: true, not_a_security_or_code_audit: true, source_observed_at: observedAt },
-      reason: "Test fixture seeds the earlier quality gate to isolate publication evidence checks.",
-      resulting_revision: 0,
-    },
-  ]), "Seed publication-gate decision fixtures");
+  const initial = await mustPresent(service.from("projects").select("editorial_revision").eq("id", projectId).single(), "Read publication-gate fixture revision");
+  await must(service.rpc("admin_verify_project_license", {
+    p_actor: actorUserId,
+    p_project_id: projectId,
+    p_expected_revision: Number(initial.editorial_revision),
+    p_expected_source_observed_at: observedAt,
+    p_license_identifier: "MIT",
+    p_evidence_reference: "https://opensource.org/license/mit",
+    p_reason: "Test fixture uses the supported human license review workflow.",
+    p_confirm_open_source: true,
+  }), "Verify test fixture license through the human review RPC");
+  const next = await mustPresent(service.from("projects").select("editorial_revision").eq("id", projectId).single(), "Read quality-review fixture revision");
+  await must(service.rpc("admin_verify_project_quality", {
+    p_actor: actorUserId,
+    p_project_id: projectId,
+    p_expected_revision: Number(next.editorial_revision),
+    p_expected_source_observed_at: observedAt,
+    p_reason: "Test fixture uses the supported human quality review workflow.",
+    p_confirm_review: true,
+  }), "Verify test fixture quality through the human review RPC");
 }
 
 async function main() {

@@ -15,6 +15,7 @@ const USAGE = `Usage:
   bun run enrich -- --dry-run
   bun run enrich -- --execute --max-candidates 5 --max-releases 20
   bun run enrich -- --execute --resume --max-candidates 5
+  bun run enrich -- --execute --recover-candidate-id <uuid> [--recover-candidate-id <uuid> ...]
 
 Execution is serial and bounded. Dry-run is the default; real database writes require --execute.`;
 const MAX_CANDIDATES = 100;
@@ -28,6 +29,7 @@ export interface EnrichmentArguments {
   resume: boolean;
   maxCandidates: number;
   maxReleases: number;
+  recoveryCandidateIds: string[];
   help: boolean;
 }
 
@@ -71,6 +73,9 @@ export function parseEnrichmentArguments(args: string[]): EnrichmentArguments {
   let resume = false;
   let maxCandidates = 5;
   let maxReleases = 20;
+  let maxCandidatesExplicit = false;
+  let maxReleasesExplicit = false;
+  const recoveryCandidateIds: string[] = [];
   let help = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -81,6 +86,15 @@ export function parseEnrichmentArguments(args: string[]): EnrichmentArguments {
       explicitMode = nextMode;
       mode = nextMode;
     } else if (arg === "--resume") resume = true;
+    else if (arg === "--recover-candidate-id") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--") || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+        throw new TypeError("--recover-candidate-id requires a UUID.");
+      }
+      if (recoveryCandidateIds.includes(value.toLowerCase())) throw new TypeError("Recovery candidate IDs must be unique.");
+      recoveryCandidateIds.push(value.toLowerCase());
+      index += 1;
+    }
     else if (arg === "--max-candidates" || arg === "--max-releases") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw new TypeError(`${arg} requires a value.`);
@@ -90,15 +104,23 @@ export function parseEnrichmentArguments(args: string[]): EnrichmentArguments {
       if (!Number.isInteger(number) || number < 1 || number > maximum) {
         throw new TypeError(`${arg} must be an integer from 1 to ${maximum}.`);
       }
-      if (arg === "--max-candidates") maxCandidates = number;
-      else maxReleases = number;
+      if (arg === "--max-candidates") { maxCandidates = number; maxCandidatesExplicit = true; }
+      else { maxReleases = number; maxReleasesExplicit = true; }
       index += 1;
     } else {
       throw new TypeError(`Unknown enrichment option: ${arg}.`);
     }
   }
   if (resume && mode !== "execute") throw new TypeError("--resume requires --execute.");
-  return { mode, resume, maxCandidates, maxReleases, help };
+  if (recoveryCandidateIds.length > 5) throw new TypeError("At most five recovery candidate IDs are allowed.");
+  if (recoveryCandidateIds.length > 0) {
+    if (resume) throw new TypeError("--resume cannot be combined with --recover-candidate-id.");
+    if (mode !== "execute") throw new TypeError("--recover-candidate-id requires --execute.");
+    if (!maxCandidatesExplicit) maxCandidates = recoveryCandidateIds.length;
+    if (maxCandidates > recoveryCandidateIds.length) throw new TypeError("--max-candidates cannot exceed the number of recovery candidate IDs.");
+    if (!maxReleasesExplicit) maxReleases = 5;
+  }
+  return { mode, resume, maxCandidates, maxReleases, recoveryCandidateIds, help };
 }
 
 export async function runEnrichmentCli(args: string[], dependencies: EnrichmentCliDependencies = {}): Promise<number> {
@@ -159,22 +181,35 @@ export async function runEnrichmentCli(args: string[], dependencies: EnrichmentC
     stage = "github_configuration";
     github = dependencies.github ?? createGitHubClient();
     stage = "job_start";
-    const started = await invoke("start_github_enrichment_job", {
-      p_resume: parsed.resume,
-      p_metadata: { max_releases: parsed.maxReleases, worker_id: workerId, cache_policy: "no_conditional_requests",
-        ...(dependencies.pipelineRunId ? { pipeline_run_id: dependencies.pipelineRunId } : {}) },
-    });
-    if (typeof started !== "string") throw databaseFailure(stage, new Error("invalid response"));
-    jobId = started;
-    if (dependencies.pipelineRunId) {
+    if (parsed.recoveryCandidateIds.length > 0) {
+      const started = await invoke("begin_github_enrichment_recovery", {
+        p_candidate_ids: parsed.recoveryCandidateIds,
+        p_worker_id: workerId,
+        p_max_releases: parsed.maxReleases,
+      });
+      jobId = readJobId(started);
+      if (!jobId) throw databaseFailure(stage, new Error("invalid recovery job response"));
+      failed += readInteger(started, "terminal_failures");
+    } else {
+      const started = await invoke("start_github_enrichment_job", {
+        p_resume: parsed.resume,
+        p_metadata: { max_releases: parsed.maxReleases, worker_id: workerId, cache_policy: "no_conditional_requests",
+          ...(dependencies.pipelineRunId ? { pipeline_run_id: dependencies.pipelineRunId } : {}) },
+      });
+      if (typeof started !== "string") throw databaseFailure(stage, new Error("invalid response"));
+      jobId = started;
+    }
+    if (dependencies.pipelineRunId && parsed.recoveryCandidateIds.length === 0) {
       stage = "job_run_tag";
       await invoke("tag_pipeline_ingestion_job", { p_job_id: jobId, p_run_id: dependencies.pipelineRunId });
     }
-    stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume })}\n`);
+    stdout(`${JSON.stringify({ event: "job_started", job_id: jobId, worker_id: workerId, resume: parsed.resume,
+      recovery_candidate_ids: parsed.recoveryCandidateIds })}\n`);
 
     while (!controller.signal.aborted && candidatesClaimed < parsed.maxCandidates) {
       stage = "candidate_claim";
-      const rawClaims = await invoke("claim_github_enrichment_candidates", {
+      const rawClaims = await invoke(parsed.recoveryCandidateIds.length > 0
+        ? "claim_github_enrichment_candidates_for_recovery" : "claim_github_enrichment_candidates", {
         p_job_id: jobId,
         p_worker_id: workerId,
         p_limit: 1,
@@ -440,6 +475,18 @@ function readRepositoryId(value: unknown): string | undefined {
   if (typeof value !== "object" || value === null || !("repository_id" in value)) return undefined;
   const id = (value as Record<string, unknown>).repository_id;
   return typeof id === "string" ? id : undefined;
+}
+
+function readJobId(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("job_id" in value)) return undefined;
+  const id = (value as Record<string, unknown>).job_id;
+  return typeof id === "string" ? id : undefined;
+}
+
+function readInteger(value: unknown, key: string): number {
+  if (typeof value !== "object" || value === null || !(key in value)) return 0;
+  const number = (value as Record<string, unknown>)[key];
+  return typeof number === "number" && Number.isSafeInteger(number) && number > 0 ? number : 0;
 }
 
 function safeFailureKind(error: unknown): string {

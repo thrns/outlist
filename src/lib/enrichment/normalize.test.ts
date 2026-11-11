@@ -116,6 +116,19 @@ function normalize(repo = repository(), resourceResults = resources()) {
 }
 
 describe("repository enrichment normalization", () => {
+  it("bounds provider-authored release titles before building the database payload", () => {
+    const largeReleasePage = Array.from({ length: 100 }, (_, index) => ({
+      ...release(index + 1, `v${index}`),
+      name: { state: "present" as const, value: "x".repeat(4000) },
+    }));
+    const result = normalize(repository(), resources({
+      releases: { kind: "ok", data: largeReleasePage, provenance: provenance("releases", largeReleasePage) },
+    }));
+    expect(result.releases.entries).toHaveLength(100);
+    expect(result.releases.entries.every((item) => item.version.length <= 256 && item.release_name?.length === 500)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(1_048_576);
+  });
+
   it("preserves GitHub identity, metrics, source field states, and license evidence", () => {
     const result = normalize();
     expect(result.repository).toMatchObject({
