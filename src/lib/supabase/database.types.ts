@@ -79,14 +79,14 @@ isOneToOne: false
                   ]
                 },"editorial_decisions": {
                   Row: {
-                    "action": string,"actor_user_id": string,"created_at": string,"evidence": NonNullable<Json>,"id": string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string
+                    "action": string,"actor_user_id": string | null,"created_at": string,"evidence": NonNullable<Json>,"id": string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string,"reviewer_type": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "action": string,"actor_user_id": string,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string
+                    "action": string,"actor_user_id"?: string | null,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state": string,"project_id": string,"reason": string,"resulting_revision": number,"resulting_state": string,"reviewer_type"?: string
                   }
                   Update: {
-                    "action"?: string,"actor_user_id"?: string,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state"?: string,"project_id"?: string,"reason"?: string,"resulting_revision"?: number,"resulting_state"?: string
+                    "action"?: string,"actor_user_id"?: string | null,"created_at"?: string,"evidence"?: NonNullable<Json>,"id"?: string,"previous_state"?: string,"project_id"?: string,"reason"?: string,"resulting_revision"?: number,"resulting_state"?: string,"reviewer_type"?: string
                   }
                   Relationships: [
                     {
@@ -99,14 +99,14 @@ isOneToOne: false
                   ]
                 },"editorial_overrides": {
                   Row: {
-                    "approved_at": string,"approved_by": string,"created_at": string,"created_by": string | null,"field_key": string,"id": string,"override_value": NonNullable<Json>,"project_id": string,"source_record_id": string | null,"updated_at": string
+                    "approved_at": string | null,"approved_by": string | null,"codex_review_id": string | null,"created_at": string,"created_by": string | null,"field_key": string,"id": string,"override_value": NonNullable<Json>,"project_id": string,"reviewer_type": string,"source_record_id": string | null,"updated_at": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "approved_at": string,"approved_by": string,"created_at"?: string,"created_by"?: string | null,"field_key": string,"id"?: string,"override_value": NonNullable<Json>,"project_id": string,"source_record_id"?: string | null,"updated_at"?: string
+                    "approved_at"?: string | null,"approved_by"?: string | null,"codex_review_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"field_key": string,"id"?: string,"override_value": NonNullable<Json>,"project_id": string,"reviewer_type"?: string,"source_record_id"?: string | null,"updated_at"?: string
                   }
                   Update: {
-                    "approved_at"?: string,"approved_by"?: string,"created_at"?: string,"created_by"?: string | null,"field_key"?: string,"id"?: string,"override_value"?: NonNullable<Json>,"project_id"?: string,"source_record_id"?: string | null,"updated_at"?: string
+                    "approved_at"?: string | null,"approved_by"?: string | null,"codex_review_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"field_key"?: string,"id"?: string,"override_value"?: NonNullable<Json>,"project_id"?: string,"reviewer_type"?: string,"source_record_id"?: string | null,"updated_at"?: string
                   }
                   Relationships: [
                     {
@@ -121,6 +121,84 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "source_records"
       referencedColumns: ["id"]
+    }
+                  ]
+                },"codex_editorial_reviews": {
+                  Row: {
+                    "candidate_id": string,"codex_review": NonNullable<Json>,"codex_version": string,"created_at": string,"decision": string,"evidence": NonNullable<Json>,"evidence_observed_at": string,"evidence_sha256": string,"execution_status": string,"full_name": string,"license_file_sha256": string | null,"license_file_url": string | null,"license_identifier": string | null,"policy_decision": NonNullable<Json>,"publication_eligible": boolean,"provider_repository_id": string,"review_id": string,"review_policy_version": string,"reviewer_identity": string,"reviewer_type": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "candidate_id": string,"codex_review": NonNullable<Json>,"codex_version": string,"created_at"?: string,"decision": string,"evidence": NonNullable<Json>,"evidence_observed_at": string,"evidence_sha256": string,"execution_status"?: string,"full_name": string,"license_file_sha256"?: string | null,"license_file_url"?: string | null,"license_identifier"?: string | null,"policy_decision": NonNullable<Json>,"publication_eligible"?: boolean,"provider_repository_id": string,"review_id": string,"review_policy_version": string,"reviewer_identity"?: string,"reviewer_type"?: string
+                  }
+                  Update: {
+                    "candidate_id"?: string,"codex_review"?: NonNullable<Json>,"codex_version"?: string,"created_at"?: string,"decision"?: string,"evidence"?: NonNullable<Json>,"evidence_observed_at"?: string,"evidence_sha256"?: string,"execution_status"?: string,"full_name"?: string,"license_file_sha256"?: string | null,"license_file_url"?: string | null,"license_identifier"?: string | null,"policy_decision"?: NonNullable<Json>,"publication_eligible"?: boolean,"provider_repository_id"?: string,"review_id"?: string,"review_policy_version"?: string,"reviewer_identity"?: string,"reviewer_type"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "codex_editorial_reviews_candidate_id_fkey"
+      columns: ["candidate_id"]
+isOneToOne: false
+      referencedRelation: "repository_candidates"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"codex_review_applications": {
+                  Row: {
+                    "applied_at": string,"id": string,"project_id": string,"resulting_revision": number,"resulting_state": string,"review_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "applied_at"?: string,"id"?: string,"project_id": string,"resulting_revision": number,"resulting_state": string,"review_id": string
+                  }
+                  Update: {
+                    "applied_at"?: string,"id"?: string,"project_id"?: string,"resulting_revision"?: number,"resulting_state"?: string,"review_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "codex_review_applications_project_id_fkey"
+      columns: ["project_id"]
+isOneToOne: false
+      referencedRelation: "projects"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "codex_review_applications_review_id_fkey"
+      columns: ["review_id"]
+isOneToOne: false
+      referencedRelation: "codex_editorial_reviews"
+      referencedColumns: ["review_id"]
+    }
+                  ]
+                },"project_publication_revocations": {
+                  Row: {
+                    "created_at": string,"id": string,"origin": string,"project_id": string,"reason": string,"repository_id": string,"resulting_revision": number,"review_id": string | null,"source_observed_at": string | null
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"origin": string,"project_id": string,"reason": string,"repository_id": string,"resulting_revision": number,"review_id"?: string | null,"source_observed_at"?: string | null
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"origin"?: string,"project_id"?: string,"reason"?: string,"repository_id"?: string,"resulting_revision"?: number,"review_id"?: string | null,"source_observed_at"?: string | null
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "project_publication_revocations_project_id_fkey"
+      columns: ["project_id"]
+isOneToOne: false
+      referencedRelation: "projects"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "project_publication_revocations_repository_id_fkey"
+      columns: ["repository_id"]
+isOneToOne: false
+      referencedRelation: "repositories"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "project_publication_revocations_review_id_fkey"
+      columns: ["review_id"]
+isOneToOne: false
+      referencedRelation: "codex_editorial_reviews"
+      referencedColumns: ["review_id"]
     }
                   ]
                 },"ingestion_items": {
@@ -705,6 +783,9 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
+            "authorize_codex_editorial_policy":
+{ Args: { "p_confirmation": string,"p_enabled": boolean,"p_policy_version": string }; Returns: Json
+                           },
             "admin_publish_project":
 { Args: { "p_actor": string,"p_expected_revision": number,"p_project_id": string,"p_reason": string }; Returns: Json
                            },
@@ -729,6 +810,9 @@ isOneToOne: false
 "begin_github_repository_assessment_recovery":
 { Args: { "p_job_id": string,"p_max_assessments": number,"p_worker_id": string }; Returns: Json
                            },
+"begin_github_enrichment_recovery":
+{ Args: { "p_candidate_ids": (string)[],"p_max_releases"?: number,"p_worker_id": string }; Returns: Json
+                           },
 "catalog_import_exclusions":
 { Args: { "p_job_id": string }; Returns: Json
                            },
@@ -744,6 +828,32 @@ isOneToOne: false
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
               "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string,"provider_repository_id": string
             }[]
+                           },
+"claim_github_enrichment_candidates_for_recovery":
+{ Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {
+              "candidate_id": string,"enrichment_attempts": number,"enrichment_max_attempts": number,"full_name": string,"lease_expires_at": string,"lease_token": string,"owner_login": string,"provider_repository_id": string
+            }[]
+                           },
+"codex_apply_editorial_review":
+{ Args: { "p_authorization_id": string,"p_expected_revision": number,"p_project_id": string,"p_review_id": string }; Returns: Json
+                           },
+"codex_create_reviewed_draft":
+{ Args: { "p_authorization_id": string,"p_candidate_id": string,"p_review_id": string }; Returns: Json
+                           },
+"codex_editorial_policy_status":
+{ Args: Record<PropertyKey, never>; Returns: Json
+                           },
+"codex_project_review_state":
+{ Args: { "p_authorization_id": string,"p_project_id": string,"p_review_id": string }; Returns: Json
+                           },
+"codex_publish_project":
+{ Args: { "p_authorization_id": string,"p_expected_revision": number,"p_project_id": string,"p_review_id": string }; Returns: Json
+                           },
+"codex_record_editorial_review":
+{ Args: { "p_authorization_id": string,"p_candidate_id": string,"p_codex_review": Json,"p_codex_version": string,"p_evidence": Json,"p_evidence_observed_at": string,"p_evidence_sha256": string,"p_full_name": string,"p_license_file_sha256": string | null,"p_license_file_url": string | null,"p_license_identifier": string | null,"p_policy_decision": Json,"p_provider_repository_id": string,"p_review_id": string }; Returns: Json
+                           },
+"codex_revoke_publication":
+{ Args: { "p_authorization_id": string,"p_expected_revision": number,"p_project_id": string,"p_reason": string }; Returns: Json
                            },
 "claim_github_repository_assessments":
 { Args: { "p_job_id": string,"p_lease_seconds"?: number,"p_limit"?: number,"p_worker_id": string }; Returns: {

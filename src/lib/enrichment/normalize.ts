@@ -406,8 +406,14 @@ function normalizeReleases(page: { data: GitHubRelease[]; sourceIndex: number; f
     seen.add(providerReleaseId);
     return {
       provider_release_id: providerReleaseId,
-      version: release.tagName,
-      release_name: fieldValue(release.name),
+      // Release titles are provider-authored free text. Bound them before
+      // constructing the JSONB commit payload so a large release history
+      // cannot exceed the database's 1 MiB transaction limit.
+      version: release.tagName.slice(0, 256),
+      release_name: (() => {
+        const value = fieldValue(release.name);
+        return value === null ? null : value.slice(0, 500);
+      })(),
       release_url: release.htmlUrl,
       published_at: fieldValue(release.publishedAt),
       is_prerelease: release.isPrerelease,

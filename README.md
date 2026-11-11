@@ -56,6 +56,10 @@ never fall back to sample projects.
 | `bun run test:pipeline-db` | Run the complete bounded pipeline against local Supabase with deterministic GitHub HTTP fixtures |
 | `bun run launch:preflight` | Read-only launch report for the configured Supabase target, migration state, public catalog, admin setup, pipeline, and integrity |
 | `bun run test:launch-preflight-db` | Verify launch preflight against disposable local Supabase |
+| `bun run catalog:review -- doctor` | Check ChatGPT Codex CLI login and read-only child-process availability |
+| `bun run catalog:review -- prepare` | Build a deterministic queue from existing catalog audit files without reimporting candidates |
+| `bun run catalog:review -- run --max-items 1` | Collect current evidence and review one candidate through Codex CLI |
+| `bun run catalog:publish -- --out-dir reports/catalog-codex-review` | Validate local review records and preview the separate publication executor |
 | `bun run github:inspect -- owner/repo` | Inspect one public GitHub repository (optional `GITHUB_TOKEN`) |
 | `bun run github:smoke -- owner/repo` | Explicitly marked live GitHub smoke check |
 | `bun run discover -- --plan initial --dry-run` | Print the bounded GitHub discovery plan without database writes |

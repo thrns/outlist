@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outlist.app/schemas/catalog-editorial-review-v2.json",
+  "title": "Outlist Codex CLI editorial review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reviewer", "outcome", "confidence", "eligibility", "listing", "supporting_sources", "rationale", "uncertainties", "material_blockers", "informational_uncertainties"],
+  "properties": {
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "model", "policy_version"],
+      "properties": {
+        "identity": { "const": "codex-cli" },
+        "model": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "policy_version": { "const": "outlist-codex-editorial-v2" }
+      }
+    },
+    "outcome": { "enum": ["approve", "reject", "investigate"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["genuine_software_product", "publicly_accessible", "meaningfully_open_source", "license_identifier", "license_confidence", "product_status", "documentation_status", "maintenance_status", "duplicate_status", "security_or_trust_concerns"],
+      "properties": {
+        "genuine_software_product": { "type": "boolean" },
+        "publicly_accessible": { "type": "boolean" },
+        "meaningfully_open_source": { "type": "boolean" },
+        "license_identifier": { "type": ["string", "null"], "maxLength": 128 },
+        "license_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "product_status": { "enum": ["functional", "likely_functional", "unclear", "not_functional"] },
+        "documentation_status": { "enum": ["sufficient", "limited", "insufficient", "unclear"] },
+        "maintenance_status": { "enum": ["active", "maintained", "stale", "archived", "unclear"] },
+        "duplicate_status": { "enum": ["distinct", "mirror", "duplicate", "unsuitable_fork", "unclear"] },
+        "security_or_trust_concerns": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+      }
+    },
+    "listing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "summary", "description", "categories", "tags", "official_website_url", "logo_url"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "summary": { "type": "string", "minLength": 10, "maxLength": 280 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 10000 },
+        "categories": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" } },
+        "tags": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 2, "maxLength": 40 } },
+        "official_website_url": { "type": ["string", "null"], "format": "uri" },
+        "logo_url": { "type": ["string", "null"], "format": "uri" }
+      }
+    },
+    "supporting_sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "source_url", "supports"],
+        "properties": {
+          "evidence_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "source_url": { "type": "string", "format": "uri" },
+          "supports": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "rationale": { "type": "string", "minLength": 20, "maxLength": 3000 },
+    "uncertainties": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "material_blockers": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "informational_uncertainties": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+  }
+}
